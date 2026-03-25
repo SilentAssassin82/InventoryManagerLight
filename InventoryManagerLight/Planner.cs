@@ -26,9 +26,6 @@ namespace InventoryManagerLight
         // queue for forced categorization sorts (bypasses the diff algorithm)
         private readonly ConcurrentQueue<InventorySnapshot[]> _forcedSortQueue = new ConcurrentQueue<InventorySnapshot[]>();
 
-        // metrics
-        private long _plannedOpsCount;
-
         private struct ItemKey
         {
             public long OwnerId;
@@ -182,81 +179,6 @@ namespace InventoryManagerLight
                 // get available sources for this item
                 List<KeyValuePair<long,int>> srcs;
                 if (!sourcesByDef.TryGetValue(itemDef, out srcs)) continue;
-                // compute min conveyor distance from any source to each sink (cheap fallback if scanner missing)
-                var sinkOwners = sinksList.Select(p => p.Key).ToArray();
-                var minDist = new Dictionary<long,int>();
-                foreach (var o in sinkOwners) minDist[o] = int.MaxValue;
-                if (_conveyorScanner != null)
-                {
-                    foreach (var s in srcs)
-                    {
-                        try
-                        {
-                            var dmap = _conveyorScanner.GetDistances(s.Key, sinkOwners);
-                            foreach (var dkv in dmap)
-                            {
-                                if (minDist.ContainsKey(dkv.Key)) minDist[dkv.Key] = Math.Min(minDist[dkv.Key], dkv.Value);
-                            }
-                        }
-                        catch { }
-                    }
-                    // treat same container-group as distance 0 (prefer local loop) regardless of conveyor path
-                    try
-                    {
-                        // if any source and sink share a non-empty container-level group name, prefer them
-                        foreach (var src in srcs)
-                        {
-                            string sgroup = null; ownerGroups.TryGetValue(src.Key, out sgroup);
-                            if (string.IsNullOrEmpty(sgroup)) continue;
-                            foreach (var o in sinkOwners)
-                            {
-                                string ogroup = null; ownerGroups.TryGetValue(o, out ogroup);
-                                if (!string.IsNullOrEmpty(ogroup) && string.Equals(sgroup, ogroup, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    minDist[o] = Math.Min(minDist[o], 0);
-                                }
-                            }
-                        }
-                    }
-                    catch { }
-                }
-                else
-                {
-                    // fallback: same-owner -> 0, otherwise 1 if any source exists
-                    foreach (var s in srcs)
-                    {
-                        foreach (var o in sinkOwners)
-                        {
-                            int d = (s.Key == o) ? 0 : 1;
-                            minDist[o] = Math.Min(minDist[o], d);
-                        }
-                    }
-                }
-                // normalize unreachable distances
-                foreach (var k2 in sinkOwners)
-                {
-                    if (minDist[k2] == int.MaxValue) minDist[k2] = 1000;
-                }
-
-                // compute weighted score = demand*DemandWeight - distance*DistanceWeight
-                if (sinksList.Count > 1)
-                {
-                    double dw = _config?.DemandWeight ?? 1.0;
-                    double xw = _config?.DistanceWeight ?? 0.5;
-                    sinksList.Sort((a, b) =>
-                    {
-                        double da = _demandTracker != null ? _demandTracker.GetDemandForOwner(a.Key, itemDef) : 0;
-                        double db = _demandTracker != null ? _demandTracker.GetDemandForOwner(b.Key, itemDef) : 0;
-                        int daDist = minDist.ContainsKey(a.Key) ? minDist[a.Key] : 1000;
-                        int dbDist = minDist.ContainsKey(b.Key) ? minDist[b.Key] : 1000;
-                        double sa = da * dw - daDist * xw;
-                        double sb = db * dw - dbDist * xw;
-                        int cmp = sb.CompareTo(sa); // descending score
-                        if (cmp != 0) return cmp;
-                        // tie-breaker deterministic
-                        return a.Key.CompareTo(b.Key);
-                    });
-                }
 
                 // We'll match sinks grouped by container-level group token so production loops stay isolated.
                 // Build mutable availability map for sources
@@ -312,7 +234,7 @@ namespace InventoryManagerLight
                                     if (localMinDist.ContainsKey(dkv.Key)) localMinDist[dkv.Key] = Math.Min(localMinDist[dkv.Key], dkv.Value);
                                 }
                             }
-                            catch { }
+                            catch (Exception ex) { _logger?.Debug("Planner: GetDistances (group) failed: " + ex.Message); }
                         }
                         // treat same container-group as distance 0
                         try
@@ -331,7 +253,7 @@ namespace InventoryManagerLight
                                 }
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { _logger?.Debug("Planner: container-group distance override (group) failed: " + ex.Message); }
                     }
                     else
                     {
@@ -391,7 +313,6 @@ namespace InventoryManagerLight
                             if (move > 0)
                             {
                                 batch.Ops.Add(new TransferOp { SourceOwner = srcOwner, DestinationOwner = sinkOwner, ItemDefinitionId = itemDef, Amount = move });
-                                Interlocked.Add(ref _plannedOpsCount, 1);
                                 // reduce global availability
                                 availBySource[srcOwner] = availBySource[srcOwner] - move;
                             }
@@ -569,7 +490,6 @@ namespace InventoryManagerLight
                     foreach (var destId in destIds)
                     {
                         batch.Ops.Add(new TransferOp { SourceOwner = srcId, DestinationOwner = destId, ItemDefinitionId = itemDef, Amount = amount });
-                        Interlocked.Add(ref _plannedOpsCount, 1);
                     }
                     if (destIds.Count == 0)
                         unsortable.Add($"{itemStr}/{amount} in [{string.Join(",", srcCats)}]");
@@ -592,7 +512,7 @@ namespace InventoryManagerLight
                 foreach (var u in unsortable)
                     _logger?.Debug($"IML:   No destination: {u}");
             }
-            catch { }
+            catch (Exception ex) { _logger?.Debug("Planner: ForcedSort logging failed: " + ex.Message); }
             return batch;
         }
 
@@ -605,12 +525,6 @@ namespace InventoryManagerLight
                 b.Ops.Add(req.RemainingOp);
                 _batchQueue.Enqueue(b);
             }
-        }
-
-        // Called by applier when a replan is required
-        public void EnqueueReplan(ReplanRequest req)
-        {
-            _replanQueue.Enqueue(req);
         }
 
         public void Dispose()

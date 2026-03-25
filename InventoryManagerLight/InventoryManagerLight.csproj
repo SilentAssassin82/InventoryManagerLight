@@ -104,7 +104,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="CategoryResolver.cs" />
-    <Compile Include="Class1.cs" />
     <Compile Include="ConsumerScanner.cs" />
     <Compile Include="ContainerMatcher.cs" />
     <Compile Include="ConveyorScanner.cs" />

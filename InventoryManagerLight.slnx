@@ -1,0 +1,9 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="InventoryManagerLight/InventoryManagerLight.csproj" Id="50bc17bd-b3d6-4da8-b332-c62e569f909c">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
+</Solution>

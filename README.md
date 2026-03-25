@@ -5,7 +5,7 @@ A lightweight Torch plugin for Space Engineers that automatically sorts and dist
 > **Version:** 1.0.0  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
-> **Repository:** https://github.com/SilentAssassin82/
+> **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
 
 ---
 
@@ -243,7 +243,7 @@ When something goes wrong, please grab:
 
 ### Where to report
 
-Open an issue at: https://github.com/SilentAssassin82/
+Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 
 ---
 

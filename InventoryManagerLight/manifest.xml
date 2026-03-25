@@ -5,7 +5,7 @@
   <Version>1.0.0</Version>
   <Description>InventoryManager The offloads work from Game Thread</Description>
   <Author>Chris</Author>
-  <Repository>https://github.com/SilentAssassin82/</Repository>
+  <Repository>https://github.com/SilentAssassin82/InventoryManagerLight</Repository>
   <Assemblies>
     <Assembly>InventoryManagerLight.dll</Assembly>
   </Assemblies>

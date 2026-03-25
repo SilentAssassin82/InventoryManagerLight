@@ -111,25 +111,6 @@ namespace InventoryManagerLight
                     catch { }
                 }
                 _logger?.Info($"IML: Managed containers found: {managedCount}");
-
-                // adjacency
-                try
-                {
-                    var adj = _conveyorScanner?.GetAdjacencySnapshot();
-                    if (adj != null)
-                    {
-                        _logger?.Info($"IML: Adjacency entries: {adj.Count}");
-                        int printed = 0;
-                        foreach (var kv in adj)
-                        {
-                            if (printed++ > 50) break;
-                            // join long[] into comma separated string
-                            var neigh = kv.Value == null ? string.Empty : string.Join(",", Array.ConvertAll(kv.Value, v => v.ToString()));
-                            _logger?.Info($"IML: Adj {kv.Key} -> [{neigh}]");
-                        }
-                    }
-                }
-                catch (Exception ex) { _logger?.Error("IML: adjacency dump failed: " + ex.Message); }
 #endif
                 // queued batches
                 try

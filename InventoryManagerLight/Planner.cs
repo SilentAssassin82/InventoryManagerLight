@@ -22,7 +22,7 @@ namespace InventoryManagerLight
         private readonly ConveyorScanner _conveyorScanner = null;
         private readonly InventoryDemandTracker _demandTracker = null;
         // previous aggregated snapshot (owner+item -> amount)
-        private readonly Dictionary<ItemKey, int> _previous = new Dictionary<ItemKey, int>();
+        private readonly Dictionary<ItemKey, float> _previous = new Dictionary<ItemKey, float>();
         // queue for forced categorization sorts (bypasses the diff algorithm)
         private readonly ConcurrentQueue<InventorySnapshot[]> _forcedSortQueue = new ConcurrentQueue<InventorySnapshot[]>();
 
@@ -112,7 +112,7 @@ namespace InventoryManagerLight
         private TransferBatch PlanFromSnapshot(InventorySnapshot[] snap)
         {
             // Aggregate current snapshot by owner+item
-            var current = new Dictionary<ItemKey, int>();
+            var current = new Dictionary<ItemKey, float>();
             // remember categories per owner from snapshots
             var ownerCategories = new Dictionary<long, string[]>();
             // remember optional container-level group per owner
@@ -125,15 +125,15 @@ namespace InventoryManagerLight
                 ownerCategories[s.OwnerId] = tag.Categories;
                 if (!string.IsNullOrEmpty(tag.Group)) ownerGroups[s.OwnerId] = tag.Group;
                 var k = new ItemKey(s.OwnerId, s.ItemDefinitionId);
-                int prev;
+                float prev;
                 current.TryGetValue(k, out prev);
                 current[k] = prev + s.Amount;
             }
 
             // Build diffs per (owner,item): diff = current - previous
             // For each itemDef, collect sources (diff < 0) and sinks (diff > 0)
-            var sourcesByDef = new Dictionary<MyDefinitionId, List<KeyValuePair<long,int>>>(); // itemdef -> list of (owner, available)
-            var sinksByDef = new Dictionary<MyDefinitionId, List<KeyValuePair<long,int>>>();   // itemdef -> list of (owner, need)
+            var sourcesByDef = new Dictionary<MyDefinitionId, List<KeyValuePair<long,float>>>(); // itemdef -> list of (owner, available)
+            var sinksByDef = new Dictionary<MyDefinitionId, List<KeyValuePair<long,float>>>();   // itemdef -> list of (owner, need)
 
             // consider keys present in either previous or current
             var keys = new HashSet<ItemKey>(_previous.Keys);
@@ -141,31 +141,31 @@ namespace InventoryManagerLight
 
             foreach (var k in keys)
             {
-                int prevAmt = 0;
+                float prevAmt = 0f;
                 _previous.TryGetValue(k, out prevAmt);
-                int currAmt = 0;
+                float currAmt = 0f;
                 current.TryGetValue(k, out currAmt);
-                int diff = currAmt - prevAmt;
-                if (diff == 0) continue;
-                if (diff > 0)
+                float diff = currAmt - prevAmt;
+                if (diff == 0f) continue;
+                if (diff > 0f)
                 {
-                    List<KeyValuePair<long,int>> list;
+                    List<KeyValuePair<long,float>> list;
                     if (!sinksByDef.TryGetValue(k.ItemDef, out list))
                     {
-                        list = new List<KeyValuePair<long,int>>();
+                        list = new List<KeyValuePair<long,float>>();
                         sinksByDef[k.ItemDef] = list;
                     }
-                    list.Add(new KeyValuePair<long,int>(k.OwnerId, diff));
+                    list.Add(new KeyValuePair<long,float>(k.OwnerId, diff));
                 }
                 else
                 {
-                    List<KeyValuePair<long,int>> list;
+                    List<KeyValuePair<long,float>> list;
                     if (!sourcesByDef.TryGetValue(k.ItemDef, out list))
                     {
-                        list = new List<KeyValuePair<long,int>>();
+                        list = new List<KeyValuePair<long,float>>();
                         sourcesByDef[k.ItemDef] = list;
                     }
-                    list.Add(new KeyValuePair<long,int>(k.OwnerId, -diff));
+                    list.Add(new KeyValuePair<long,float>(k.OwnerId, -diff));
                 }
             }
 
@@ -177,20 +177,20 @@ namespace InventoryManagerLight
                 var itemDef = kv.Key;
                 var sinksList = kv.Value;
                 // get available sources for this item
-                List<KeyValuePair<long,int>> srcs;
+                List<KeyValuePair<long,float>> srcs;
                 if (!sourcesByDef.TryGetValue(itemDef, out srcs)) continue;
 
                 // We'll match sinks grouped by container-level group token so production loops stay isolated.
                 // Build mutable availability map for sources
-                var availBySource = new Dictionary<long,int>();
+                var availBySource = new Dictionary<long,float>();
                 foreach (var s in srcs) availBySource[s.Key] = s.Value;
 
                 // Group sinks by their container-level group (if any)
-                var sinksByGroup = new Dictionary<string, List<KeyValuePair<long,int>>>(StringComparer.OrdinalIgnoreCase);
+                var sinksByGroup = new Dictionary<string, List<KeyValuePair<long,float>>>(StringComparer.OrdinalIgnoreCase);
                 foreach (var sn in sinksList)
                 {
                     string g = null; ownerGroups.TryGetValue(sn.Key, out g);
-                    if (!sinksByGroup.TryGetValue(g, out var list)) { list = new List<KeyValuePair<long,int>>(); sinksByGroup[g] = list; }
+                    if (!sinksByGroup.TryGetValue(g, out var list)) { list = new List<KeyValuePair<long,float>>(); sinksByGroup[g] = list; }
                     list.Add(sn);
                 }
 
@@ -201,7 +201,7 @@ namespace InventoryManagerLight
                     var sinksForGroup = gkv.Value;
 
                     // pick candidate sources: prefer sources that share the same container-level group
-                    List<KeyValuePair<long,int>> candidates;
+                    List<KeyValuePair<long,float>> candidates;
                     if (!string.IsNullOrEmpty(groupName))
                     {
                         candidates = srcs.Where(s => { string sg = null; ownerGroups.TryGetValue(s.Key, out sg); return string.Equals(sg, groupName, StringComparison.OrdinalIgnoreCase); }).ToList();
@@ -291,26 +291,26 @@ namespace InventoryManagerLight
                     }
 
                     // perform matching between sinksForGroup and candidate sources using availBySource
-                    var sinksQ = new Queue<KeyValuePair<long,int>>(sinksForGroup);
+                    var sinksQ = new Queue<KeyValuePair<long,float>>(sinksForGroup);
                     // build a sources queue from candidates using current availability
-                    var srcQueue = new Queue<KeyValuePair<long,int>>();
+                    var srcQueue = new Queue<KeyValuePair<long,float>>();
                     foreach (var c in candidates)
                     {
-                        if (availBySource.TryGetValue(c.Key, out var av) && av > 0) srcQueue.Enqueue(new KeyValuePair<long,int>(c.Key, av));
+                        if (availBySource.TryGetValue(c.Key, out var av) && av > 0f) srcQueue.Enqueue(new KeyValuePair<long,float>(c.Key, av));
                     }
 
                     while (sinksQ.Count > 0 && srcQueue.Count > 0)
                     {
                         var sink = sinksQ.Dequeue();
                         long sinkOwner = sink.Key;
-                        int need = sink.Value;
-                        while (need > 0 && srcQueue.Count > 0)
+                        float need = sink.Value;
+                        while (need > 0f && srcQueue.Count > 0)
                         {
                             var src = srcQueue.Dequeue();
                             long srcOwner = src.Key;
-                            int avail = src.Value;
-                            int move = Math.Min(avail, need);
-                            if (move > 0)
+                            float avail = src.Value;
+                            float move = Math.Min(avail, need);
+                            if (move > 0f)
                             {
                                 batch.Ops.Add(new TransferOp { SourceOwner = srcOwner, DestinationOwner = sinkOwner, ItemDefinitionId = itemDef, Amount = move });
                                 // reduce global availability
@@ -318,7 +318,7 @@ namespace InventoryManagerLight
                             }
                             avail -= move;
                             need -= move;
-                            if (avail > 0) srcQueue.Enqueue(new KeyValuePair<long,int>(srcOwner, avail));
+                            if (avail > 0f) srcQueue.Enqueue(new KeyValuePair<long,float>(srcOwner, avail));
                         }
                     }
                 }
@@ -327,12 +327,12 @@ namespace InventoryManagerLight
             // coalesce ops by (src,dst,item)
             if (batch.Ops.Count > 1)
             {
-                var map = new Dictionary<Tuple<long,long,MyDefinitionId>, int>();
+                var map = new Dictionary<Tuple<long,long,MyDefinitionId>, float>();
                 foreach (var op in batch.Ops)
                 {
                     var key = Tuple.Create(op.SourceOwner, op.DestinationOwner, op.ItemDefinitionId);
-                    int v;
-                    if (!map.TryGetValue(key, out v)) v = 0;
+                    float v;
+                    if (!map.TryGetValue(key, out v)) v = 0f;
                     map[key] = v + op.Amount;
                 }
                 var merged = new List<TransferOp>(map.Count);
@@ -357,7 +357,7 @@ namespace InventoryManagerLight
         {
             var containerCategories = new Dictionary<long, string[]>();
             var containerGroups = new Dictionary<long, string>();
-            var containerContents = new Dictionary<long, Dictionary<MyDefinitionId, int>>();
+            var containerContents = new Dictionary<long, Dictionary<MyDefinitionId, float>>();
             var containerDenySubtypes = new Dictionary<long, HashSet<string>>();
             var containerAllowSubtypes = new Dictionary<long, HashSet<string>>();
 
@@ -376,13 +376,13 @@ namespace InventoryManagerLight
 
                 if (s.Amount <= 0) continue; // sentinel entry for empty containers
 
-                Dictionary<MyDefinitionId, int> dict;
+                Dictionary<MyDefinitionId, float> dict;
                 if (!containerContents.TryGetValue(s.OwnerId, out dict))
                 {
-                    dict = new Dictionary<MyDefinitionId, int>();
+                    dict = new Dictionary<MyDefinitionId, float>();
                     containerContents[s.OwnerId] = dict;
                 }
-                int prev;
+                float prev;
                 dict.TryGetValue(s.ItemDefinitionId, out prev);
                 dict[s.ItemDefinitionId] = prev + s.Amount;
             }
@@ -409,8 +409,8 @@ namespace InventoryManagerLight
                 foreach (var iv in cv.Value)
                 {
                     var itemDef = iv.Key;
-                    int amount = iv.Value;
-                    if (amount <= 0) continue;
+                    float amount = iv.Value;
+                    if (amount <= 0f) continue;
                     var itemStr = itemDef.ToString();
 
                     // Does this item belong in this container?
@@ -498,7 +498,7 @@ namespace InventoryManagerLight
 
             try
             {
-                int totalItems = containerContents.Values.Sum(d => d.Values.Sum());
+                float totalItems = containerContents.Values.Sum(d => d.Values.Sum());
                 _logger?.Info($"IML: ForcedSort planned {batch.Ops.Count} op(s) across {containerCategories.Count} container(s), {totalItems} total item(s) scanned");
                 if (unsortable.Count > 0)
                     _logger?.Info($"IML: {unsortable.Count} item type(s) are misplaced but have no matching destination — add a container tagged for their category or update CategoryMappings in config");

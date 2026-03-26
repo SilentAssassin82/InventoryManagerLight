@@ -454,7 +454,7 @@ namespace InventoryManagerLight
                                     try
                                     {
                                         var def = GetItemDefinitionId(it);
-                                        snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = def, Amount = it.Amount.ToIntSafe(), GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = name, ContainerCustomData = cd });
+                                        snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = def, Amount = (float)it.Amount, GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = name, ContainerCustomData = cd });
                                         hasItems = true;
                                     }
                                     catch { }
@@ -498,7 +498,7 @@ namespace InventoryManagerLight
                                 try
                                 {
                                     var def = GetItemDefinitionId(it);
-                                    snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = def, Amount = it.Amount.ToIntSafe(), GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = drainContainerName, ContainerCustomData = null });
+                                    snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = def, Amount = (float)it.Amount, GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = drainContainerName, ContainerCustomData = null });
                                 }
                                 catch { }
                             }

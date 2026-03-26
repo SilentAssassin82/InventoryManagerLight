@@ -118,23 +118,23 @@ namespace InventoryManagerLight
         private TransferResult ApplyOp(TransferOp op)
         {
             // Source gone or already empty — op is vacuously satisfied.
-            int available = 0;
-            if (!_adapter.TryGetTotalAmount(op.SourceOwner, op.ItemDefinitionId, out available) || available <= 0)
+            float available = 0f;
+            if (!_adapter.TryGetTotalAmount(op.SourceOwner, op.ItemDefinitionId, out available) || available <= 0f)
             {
-                return new TransferResult { Moved = 0, Status = TransferStatus.Success };
+                return new TransferResult { Moved = 0f, Status = TransferStatus.Success };
             }
 
-            int want = op.Amount;
-            int toMove = Math.Min(want, available);
+            float want = op.Amount;
+            float toMove = Math.Min(want, available);
             // enforce max chunk
             toMove = Math.Min(toMove, _config.MaxTransferChunk);
 
-            int moved = _adapter.Transfer(op.SourceOwner, op.DestinationOwner, op.ItemDefinitionId, toMove);
+            float moved = _adapter.Transfer(op.SourceOwner, op.DestinationOwner, op.ItemDefinitionId, toMove);
             // Treat 0-moved as Success (not Failed) so we don't re-enqueue the same
             // src→dest pair forever when the destination is full. The next op in the
             // batch targets a different destination and will carry the overflow.
-            if (moved <= 0) return new TransferResult { Moved = 0, Status = TransferStatus.Success };
-            Interlocked.Add(ref _totalItemsMoved, moved);
+            if (moved <= 0f) return new TransferResult { Moved = 0f, Status = TransferStatus.Success };
+            Interlocked.Add(ref _totalItemsMoved, (long)moved);
             Interlocked.Increment(ref _totalOpsCompleted);
             if (moved < op.Amount) return new TransferResult { Moved = moved, Status = TransferStatus.Partial };
             return new TransferResult { Moved = moved, Status = TransferStatus.Success };

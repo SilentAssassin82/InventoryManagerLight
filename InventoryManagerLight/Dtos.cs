@@ -39,7 +39,7 @@ namespace InventoryManagerLight
     {
         public long OwnerId; // e.g., entity id owning the inventory
         public VRage.Game.MyDefinitionId ItemDefinitionId; // concrete item def id
-        public int Amount;
+        public float Amount;
         public long GridId; // grid that contains this inventory
         // Optional container metadata captured on the game thread
         public string ContainerName;
@@ -52,7 +52,7 @@ namespace InventoryManagerLight
         public long SourceOwner;
         public long DestinationOwner;
         public VRage.Game.MyDefinitionId ItemDefinitionId;
-        public int Amount;
+        public float Amount;
     }
 
     public enum TransferStatus
@@ -64,7 +64,7 @@ namespace InventoryManagerLight
 
     public struct TransferResult
     {
-        public int Moved;
+        public float Moved;
         public TransferStatus Status;
     }
 

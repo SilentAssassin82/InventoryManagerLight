@@ -10,14 +10,14 @@ namespace InventoryManagerLight
     public interface IInventoryAdapter
     {
         // Try to get the total available amount of an item for a given owner (sum across inventories).
-        bool TryGetTotalAmount(long ownerId, VRage.Game.MyDefinitionId itemDef, out int amount);
+        bool TryGetTotalAmount(long ownerId, VRage.Game.MyDefinitionId itemDef, out float amount);
 
         // Check whether the destination can accept the specified amount of item.
-        bool CanAccept(long destOwnerId, VRage.Game.MyDefinitionId itemDef, int amount);
+        bool CanAccept(long destOwnerId, VRage.Game.MyDefinitionId itemDef, float amount);
 
         // Attempt to transfer up to 'amount' items from sourceOwner to destOwner.
         // Returns the number of items actually moved.
-        int Transfer(long sourceOwnerId, long destOwnerId, VRage.Game.MyDefinitionId itemDef, int amount);
+        float Transfer(long sourceOwnerId, long destOwnerId, VRage.Game.MyDefinitionId itemDef, float amount);
     }
 
     /// <summary>
@@ -26,18 +26,18 @@ namespace InventoryManagerLight
     /// </summary>
     public class DefaultInventoryAdapter : IInventoryAdapter
     {
-        public bool TryGetTotalAmount(long ownerId, VRage.Game.MyDefinitionId itemDef, out int amount)
+        public bool TryGetTotalAmount(long ownerId, VRage.Game.MyDefinitionId itemDef, out float amount)
         {
-            amount = 10000; // simulate large supply
+            amount = 10000f; // simulate large supply
             return true;
         }
 
-        public bool CanAccept(long destOwnerId, VRage.Game.MyDefinitionId itemDef, int amount)
+        public bool CanAccept(long destOwnerId, VRage.Game.MyDefinitionId itemDef, float amount)
         {
             return true; // always accept in scaffold
         }
 
-        public int Transfer(long sourceOwnerId, long destOwnerId, VRage.Game.MyDefinitionId itemDef, int amount)
+        public float Transfer(long sourceOwnerId, long destOwnerId, VRage.Game.MyDefinitionId itemDef, float amount)
         {
             // simulate always moving requested amount
             return amount;

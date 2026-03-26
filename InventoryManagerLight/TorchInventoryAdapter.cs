@@ -28,9 +28,9 @@ namespace InventoryManagerLight
         // Note: This implementation assumes that the integer itemDef used by the planner
         // maps to the hash code of MyItemType.ToString() or another mapping you provide.
 
-        public bool TryGetTotalAmount(long ownerId, VRage.Game.MyDefinitionId itemDef, out int amount)
+        public bool TryGetTotalAmount(long ownerId, VRage.Game.MyDefinitionId itemDef, out float amount)
         {
-            amount = 0;
+            amount = 0f;
             try
             {
                 var ent = MyAPIGateway.Entities.GetEntityById(ownerId) as VRage.ModAPI.IMyEntity;
@@ -52,7 +52,7 @@ namespace InventoryManagerLight
                             var id = GetDefinitionIdFromStack(it);
                             if (id.Equals(itemDef))
                             {
-                                amount += it.Amount.ToIntSafe();
+                                amount += (float)it.Amount;
                             }
                         }
                         catch { }
@@ -63,12 +63,12 @@ namespace InventoryManagerLight
             }
             catch
             {
-                amount = 0;
+                amount = 0f;
                 return false;
             }
         }
 
-        public bool CanAccept(long destOwnerId, VRage.Game.MyDefinitionId itemDef, int amount)
+        public bool CanAccept(long destOwnerId, VRage.Game.MyDefinitionId itemDef, float amount)
         {
             try
             {
@@ -94,27 +94,27 @@ namespace InventoryManagerLight
             catch { return false; }
         }
 
-        public int Transfer(long sourceOwnerId, long destOwnerId, VRage.Game.MyDefinitionId itemDef, int amount)
+        public float Transfer(long sourceOwnerId, long destOwnerId, VRage.Game.MyDefinitionId itemDef, float amount)
         {
             try
             {
                 var srcEnt = MyAPIGateway.Entities.GetEntityById(sourceOwnerId) as VRage.ModAPI.IMyEntity;
                 var dstEnt = MyAPIGateway.Entities.GetEntityById(destOwnerId) as VRage.ModAPI.IMyEntity;
-                if (srcEnt == null || dstEnt == null) return 0;
+                if (srcEnt == null || dstEnt == null) return 0f;
                 var srcBlock = srcEnt as Sandbox.ModAPI.IMyTerminalBlock;
                 var dstBlock = dstEnt as Sandbox.ModAPI.IMyTerminalBlock;
-                if (srcBlock == null || dstBlock == null) return 0;
+                if (srcBlock == null || dstBlock == null) return 0f;
 
-                int remaining = amount;
+                float remaining = amount;
                 // Production blocks (assemblers/refineries) have inventory 0 = input queue, 1 = output.
                 // Always start from index 1 for production blocks to avoid draining items mid-production.
                 int srcInvStart = (srcBlock is Sandbox.ModAPI.IMyProductionBlock && srcBlock.InventoryCount >= 2) ? 1 : 0;
-                for (int si = srcInvStart; si < srcBlock.InventoryCount && remaining > 0; si++)
+                for (int si = srcInvStart; si < srcBlock.InventoryCount && remaining > 0f; si++)
                 {
                     var srcInv = srcBlock.GetInventory(si);
                     if (srcInv == null) continue;
 
-                    for (int di = 0; di < dstBlock.InventoryCount && remaining > 0; di++)
+                    for (int di = 0; di < dstBlock.InventoryCount && remaining > 0f; di++)
                     {
                         var dstInv = dstBlock.GetInventory(di);
                         if (dstInv == null) continue;
@@ -122,37 +122,37 @@ namespace InventoryManagerLight
                         // Re-fetch items each pass: transferring a full stack removes the slot,
                         // compacting the list and invalidating all higher indices.
                         bool progress = true;
-                        while (remaining > 0 && progress)
+                        while (remaining > 0f && progress)
                         {
                             progress = false;
                             var items = new List<Ingame.MyInventoryItem>();
                             srcInv.GetItems(items);
 
-                            for (int itemIndex = 0; itemIndex < items.Count && remaining > 0; itemIndex++)
+                            for (int itemIndex = 0; itemIndex < items.Count && remaining > 0f; itemIndex++)
                             {
                                 var stack = items[itemIndex];
                                 var id = GetDefinitionIdFromStack(stack);
                                 if (!id.Equals(itemDef)) continue;
 
-                                int stackAmt = stack.Amount.ToIntSafe();
-                                if (stackAmt <= 0) continue;
+                                float stackAmt = (float)stack.Amount;
+                                if (stackAmt <= 0f) continue;
 
-                                int want = Math.Min(Math.Min(stackAmt, remaining), MaxTransferChunkDefault);
+                                float want = Math.Min(Math.Min(stackAmt, remaining), MaxTransferChunkDefault);
                                 // Halving retry: TransferItemTo requires the full requested amount to fit.
                                 // If the destination is partially full, step down until something moves
                                 // or we confirm there is no room at all.
-                                int chunk = want;
-                                int moved = 0;
-                                while (chunk > 0 && moved == 0)
+                                float chunk = want;
+                                float moved = 0f;
+                                while (chunk >= 0.000001f && moved == 0f)
                                 {
                                     moved = TryTransferViaReflection(srcInv, dstInv, itemIndex, chunk);
-                                    if (moved == 0) chunk /= 2;
+                                    if (moved == 0f) chunk /= 2f;
                                 }
                                 // Creative mode: the API enforces block volume limits even though the
                                 // game allows manual overfilling via the GUI. Bypass via reflection.
-                                if (moved == 0 && MyAPIGateway.Session?.CreativeMode == true)
+                                if (moved == 0f && MyAPIGateway.Session?.CreativeMode == true)
                                     moved = TryTransferCreativeBypass(srcInv, dstInv, itemIndex, want);
-                                if (moved > 0)
+                                if (moved > 0f)
                                 {
                                     remaining -= moved;
                                     progress = true;
@@ -167,7 +167,7 @@ namespace InventoryManagerLight
             }
             catch
             {
-                return 0;
+                return 0f;
             }
         }
 
@@ -176,7 +176,7 @@ namespace InventoryManagerLight
         // Transfer 'want' items at slot index 'itemIndex' from srcInv to dstInv.
         // TransferItemTo(dst, sourceItemIndex, targetItemIndex, stackIfPossible, amount, checkConnection) → bool
         // sourceItemIndex is the 0-based slot position, NOT ItemId.
-        private int TryTransferViaReflection(VRage.Game.ModAPI.IMyInventory srcInv, VRage.Game.ModAPI.IMyInventory dstInv, int itemIndex, int want)
+        private float TryTransferViaReflection(VRage.Game.ModAPI.IMyInventory srcInv, VRage.Game.ModAPI.IMyInventory dstInv, int itemIndex, float want)
         {
             try
             {
@@ -192,7 +192,7 @@ namespace InventoryManagerLight
             {
                 _logger.Error("Transfer exception: " + ex.Message);
             }
-            return 0;
+            return 0f;
         }
 
         // Cached FieldInfo for the internal m_maxVolume field on MyInventory.
@@ -204,7 +204,7 @@ namespace InventoryManagerLight
         // containers that are at API capacity, even though the game lets players overfill them
         // manually in Creative mode. We temporarily null m_maxVolume on the destination so
         // CanItemsBeAdded skips the volume check, perform the transfer, then restore immediately.
-        private int TryTransferCreativeBypass(VRage.Game.ModAPI.IMyInventory srcInv, VRage.Game.ModAPI.IMyInventory dstInv, int itemIndex, int want)
+        private float TryTransferCreativeBypass(VRage.Game.ModAPI.IMyInventory srcInv, VRage.Game.ModAPI.IMyInventory dstInv, int itemIndex, float want)
         {
             try
             {
@@ -224,7 +224,7 @@ namespace InventoryManagerLight
                         _logger.Warn("Creative bypass: m_maxVolume field not found — overfill transfers will not work");
                 }
 
-                if (_inventoryMaxVolumeField == null) return 0;
+                if (_inventoryMaxVolumeField == null) return 0f;
 
                 var saved = _inventoryMaxVolumeField.GetValue(dstInv);
                 _inventoryMaxVolumeField.SetValue(dstInv, null); // remove volume cap
@@ -249,7 +249,7 @@ namespace InventoryManagerLight
             {
                 _logger.Error("Creative bypass exception: " + ex.Message);
             }
-            return 0;
+            return 0f;
         }
 
         private VRage.Game.MyDefinitionId GetDefinitionIdFromStack(Ingame.MyInventoryItem stack)
@@ -276,20 +276,20 @@ namespace InventoryManagerLight
     // Stubbed version when TORCH symbol is not defined.
     public class TorchInventoryAdapter : IInventoryAdapter
     {
-        public bool TryGetTotalAmount(long ownerId, MyDefinitionId itemDef, out int amount)
+        public bool TryGetTotalAmount(long ownerId, MyDefinitionId itemDef, out float amount)
         {
-            amount = 0;
+            amount = 0f;
             return false;
         }
 
-        public bool CanAccept(long destOwnerId, MyDefinitionId itemDef, int amount)
+        public bool CanAccept(long destOwnerId, MyDefinitionId itemDef, float amount)
         {
             return false;
         }
 
-        public int Transfer(long sourceOwnerId, long destOwnerId, MyDefinitionId itemDef, int amount)
+        public float Transfer(long sourceOwnerId, long destOwnerId, MyDefinitionId itemDef, float amount)
         {
-            return 0;
+            return 0f;
         }
     }
 }

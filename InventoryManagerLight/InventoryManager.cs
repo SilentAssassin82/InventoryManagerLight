@@ -311,6 +311,15 @@ namespace InventoryManagerLight
                     try { name = tb.CustomName; } catch { }
                     try { cd = tb.CustomData; } catch { }
 
+                    // Collect LCD panels tagged for IML display — text panels are never managed containers
+                    if (tb is Sandbox.ModAPI.IMyTextPanel)
+                    {
+                        var filter = ParseLcdTag(name, cd);
+                        if (filter != null)
+                            lcdPanels.Add((tb.EntityId, filter));
+                        continue;
+                    }
+
                     // Accumulate category item totals from managed containers
                     var tag = ContainerMatcher.ParseContainerTag(name, cd, _config.ContainerTagPrefix);
                     if (tag.Categories != null && tag.Categories.Length > 0)
@@ -335,14 +344,6 @@ namespace InventoryManagerLight
                             catContainers.TryGetValue(cat, out prev); catContainers[cat] = prev + 1;
                             catItems.TryGetValue(cat, out prev);      catItems[cat]      = prev + containerItems;
                         }
-                    }
-
-                    // Collect LCD panels tagged for IML display
-                    if (tb is Sandbox.ModAPI.IMyTextPanel)
-                    {
-                        var filter = ParseLcdTag(name, cd);
-                        if (filter != null)
-                            lcdPanels.Add((tb.EntityId, filter));
                     }
                 }
                 catch { }
@@ -434,6 +435,7 @@ namespace InventoryManagerLight
                         string name = null; string cd = null;
                         try { name = tb.CustomName; } catch { }
                         try { cd = tb.CustomData; } catch { }
+                        if (tb is Sandbox.ModAPI.IMyTextPanel) continue; // text panels have no inventory
                         var tag = ContainerMatcher.ParseContainerTag(name, cd, _config.ContainerTagPrefix);
                         if (tag.Categories == null || tag.Categories.Length == 0) continue;
                         count++;

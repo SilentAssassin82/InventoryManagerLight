@@ -129,7 +129,7 @@ Add one or more `IML:MIN=` lines to an assembler's **CustomData**. That assemble
 **CustomData (multi-line, recommended):**
 ```
 IML:MIN=SteelPlate:1000
-IML:MIN=MotorComponent:500
+IML:MIN=Motor:500
 ```
 
 **Block name (single line, if you prefer):**
@@ -140,7 +140,7 @@ Assembler [IML:MIN=SteelPlate:1000,MotorComponent:500]
 Multiple items can be combined on a single line in either location:
 
 ```
-IML:MIN=SteelPlate:1000,MotorComponent:500,Construction:2000
+IML:MIN=SteelPlate:1000,Motor:500,Construction:2000
 ```
 
 **How it works:**
@@ -158,7 +158,7 @@ IML:MIN=InteriorPlate:1000
 
 *Assembler B CustomData:*
 ```
-IML:MIN=MotorComponent:500,SmallTube:800
+IML:MIN=Motor:500,SmallTube:800
 ```
 
 ---
@@ -171,7 +171,7 @@ If you are building the plugin yourself, you can set server-wide fallback thresh
 
 ```csharp
 config.AssemblerThresholds["SteelPlate"] = 500;
-config.AssemblerThresholds["MotorComponent"] = 200;
+config.AssemblerThresholds["Motor"] = 200;
 ```
 
 > If an item appears in both a CustomData `IML:MIN=` tag **and** the global config, the CustomData assembler wins and the global entry is skipped for that item.
@@ -185,16 +185,26 @@ Keys are **SubtypeId** values as they appear in Space Engineers (case-insensitiv
 | Item | SubtypeId |
 |------|-----------|
 | Steel Plate | `SteelPlate` |
-| Motor | `Motor` |
-| Medical Component | `Medical` |
+| Interior Plate | `InteriorPlate` |
+| Metal Grid | `MetalGrid` |
 | Construction Comp. | `Construction` |
 | Small Steel Tube | `SmallTube` |
 | Large Steel Tube | `LargeTube` |
-| Computer | `ComputerComponent` |
-| Gravity Generator Comp. | `GravityGenerator` |
+| Girder | `Girder` |
+| Bulletproof Glass | `BulletproofGlass` |
+| Motor | `Motor` |
+| Medical Component | `Medical` |
+| Computer | `Computer` |
+| Display | `Display` |
+| Detector Component | `Detector` |
 | Radio Comm. Component | `RadioCommunication` |
-| Reactor Component | `ReactorComponent` |
-| Thruster Component | `ThrustComponent` |
+| Gravity Generator Comp. | `GravityGenerator` |
+| Reactor Component | `Reactor` |
+| Thruster Component | `Thrust` |
+| Explosives | `Explosives` |
+| Power Cell | `PowerCell` |
+| Solar Cell | `SolarCell` |
+| Superconductor | `SuperConductor` |
 
 If a subtype name is wrong, IML will log a debug message: `IML: AssemblerManager: no blueprint for 'XYZ'` — check the Torch log and correct the spelling.
 

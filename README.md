@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.1.3  
+> **Version:** 1.2.0  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -165,13 +165,15 @@ IML:MIN=Motor:500,SmallTube:800
 
 ### Global Config Fallback
 
-> **Note:** The global config fallback requires modifying the plugin source code and rebuilding — there is no editable config file on the server. For most setups, per-assembler `IML:MIN=` tags in CustomData are the recommended approach and require no code changes.
+> **Note:** Per-assembler `IML:MIN=` tags in CustomData are the recommended approach. The global config fallback is set via `AssemblerThresholds` in `iml-config.xml` — no rebuilding required.
 
-If you are building the plugin yourself, you can set server-wide fallback thresholds in `RuntimeConfig.cs` for items *not* claimed by any CustomData assembler. The least-loaded assembler (shortest current queue) is chosen automatically.
+Add entries to `AssemblerThresholds` in `iml-config.xml`:
 
-```csharp
-config.AssemblerThresholds["SteelPlate"] = 500;
-config.AssemblerThresholds["Motor"] = 200;
+```xml
+<AssemblerThresholds>
+  <Item key="SteelPlate" value="500" />
+  <Item key="Motor" value="200" />
+</AssemblerThresholds>
 ```
 
 > If an item appears in both a CustomData `IML:MIN=` tag **and** the global config, the CustomData assembler wins and the global entry is skipped for that item.
@@ -245,6 +247,7 @@ All commands are entered in the Torch console (or server chat with appropriate p
 | Command | Description |
 |---------|-------------|
 | `!iml status` | Shows plugin statistics: total sort passes, operations completed, items moved, and current config values |
+| `!iml reload` | Reloads `iml-config.xml` and applies the new settings immediately — no server restart needed |
 | `!iml sortall` | Triggers an immediate full sort pass across all grids right now |
 | `!iml queueall` | Immediately runs the assembler auto-queue scan and prints per-assembler results (found/queued/OK/error) |
 | `!iml sort <entityId>` | Triggers an immediate sort pass for the grid containing the given entity ID |
@@ -264,18 +267,41 @@ When grids connect (docking, merge blocks, rotor/hinge attachment with conveyor 
 
 ## Configuration
 
-All settings are compiled-in defaults in `RuntimeConfig.cs` — there is no editable config file on the server. To change defaults, modify `RuntimeConfig.cs` and rebuild the plugin. In-game configuration is done entirely through block **CustomData** tags (see above).
+IML stores its settings in **`iml-config.xml`**, created automatically next to `InventoryManagerLight.dll` on first run. Edit the file and run `!iml reload` to apply changes without restarting the server.
 
-Current defaults:
+> **Location:** `Torch/Plugins/InventoryManagerLight/iml-config.xml`
+
+In-game configuration is done entirely through block **CustomData** tags (see above).
+
+Available settings:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `AutoSortIntervalTicks` | `6000` | Ticks between automatic sort passes (~2 min at 60 UPS) |
-| `LcdUpdateIntervalTicks` | `300` | Ticks between LCD refreshes (~5 sec) |
+| `LcdUpdateIntervalTicks` | `300` | Ticks between LCD refreshes (~5 sec). Set to `0` to disable |
 | `DrainProductionOutputs` | `true` | Whether to pull finished items from assembler/refinery output slots |
 | `AssemblerScanIntervalTicks` | `3600` | Ticks between assembler auto-queue scans (~60 sec). Set to `0` to disable |
-| `AssemblerThresholds` | *(empty)* | Global per-subtype minimum stock targets for assembler auto-queuing (fallback when no `IML:MIN=` tag claims the item) |
 | `RestrictToConveyorConnectedGrids` | `false` | If true, only sorts within connected conveyor networks (experimental) |
+| `TransfersPerTick` | `50` | Max transfer operations applied per game tick |
+| `MsBudgetPerTick` | `2` | Max milliseconds spent applying transfers per tick |
+| `MaxSortMs` | `100` | Max milliseconds for block enumeration during a sort pass |
+| `AssemblerThresholds` | *(empty)* | Global per-subtype minimum stock for assembler auto-queuing (fallback when no `IML:MIN=` tag claims the item) |
+| `MinStockThresholds` | *(empty)* | Per-category low-stock alert thresholds for LCD panels and `!iml status` |
+
+### Setting AssemblerThresholds in the config file
+
+Add one `<Item>` per subtype inside `<AssemblerThresholds>`:
+
+```xml
+<ImlConfig>
+  <AssemblerThresholds>
+    <Item key="SteelPlate" value="500" />
+    <Item key="Motor" value="200" />
+  </AssemblerThresholds>
+</ImlConfig>
+```
+
+Then run `!iml reload`. Per-assembler `IML:MIN=` tags in CustomData always take priority over these global fallbacks.
 
 ---
 
@@ -320,7 +346,7 @@ IML:MIN=SmallTube:1000,LargeTube:500
 ```
 
 **Assembler that handles all other components (global config fallback):**
-*(no CustomData tag needed — add entries to `AssemblerThresholds` in `RuntimeConfig.cs` if building from source)*
+*(no CustomData tag needed — add entries to `AssemblerThresholds` in `iml-config.xml` and run `!iml reload`)*
 
 ---
 
@@ -364,6 +390,10 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.2.0
+- **Persistent config file:** IML now reads and writes `iml-config.xml` next to the plugin DLL on first run. All server-tunable settings (`AutoSortIntervalTicks`, `DrainProductionOutputs`, `AssemblerThresholds`, `MinStockThresholds`, etc.) are now editable without rebuilding.
+- **`!iml reload` command:** Applies a new `iml-config.xml` to the running plugin instantly — no server restart required.
 
 ### v1.1.2
 - **Blueprint subtype fix:** Space Engineers' Economy update renamed several vanilla components (e.g. the item SubtypeId `MotorComponent` became `Motor`, `MedicalComponent` became `Medical`) while the blueprint SubtypeIds were left unchanged. IML now uses `MyDefinitionManager` to resolve the correct blueprint for each item at runtime, so queuing and queue-readback work correctly regardless of which SE version or update level the server is running. No config changes needed.

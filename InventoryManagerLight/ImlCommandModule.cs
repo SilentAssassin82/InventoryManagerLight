@@ -118,6 +118,15 @@ namespace InventoryManagerLight
                 sb.AppendLine(line);
             Context.Respond(sb.ToString().TrimEnd());
         }
+
+        [Command("reload", "Reloads iml-config.xml without restarting the server.")]
+        public void Reload()
+        {
+            var p = Plugin;
+            if (p?.Manager == null || p.ConfigManager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            p.ConfigManager.Load(p.Config);
+            Context.Respond($"IML: Config reloaded from {p.ConfigManager.FilePath}");
+        }
         }
     }
     #endif

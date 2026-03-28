@@ -41,8 +41,12 @@ namespace InventoryManagerLight
 
         // Expose plugin instance for command module and action handlers
         private static InventoryManagerPlugin _instance;
+        private RuntimeConfig _config;
+        private ConfigManager _configManager;
         public static InventoryManagerPlugin Instance => _instance;
         public InventoryManager Manager => _manager;
+        public RuntimeConfig Config => _config;
+        public ConfigManager ConfigManager => _configManager;
 
         public override void Init(ITorchBase torch)
         {
@@ -50,13 +54,18 @@ namespace InventoryManagerLight
             try
             {
                 _torchBase = torch;
-                _manager = new InventoryManager();
+                // resolve plugin directory once — used for both config file and command dir
+                string pluginDir = ".";
+                try { pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "."; } catch { }
+                // load (or create) iml-config.xml before constructing the manager
+                _config = new RuntimeConfig();
+                _configManager = new ConfigManager(pluginDir, new NLogLogger());
+                _configManager.LoadOrCreate(_config);
+                _manager = new InventoryManager(_config);
                 // prepare command directory under plugin folder for simple admin commands
                 try
                 {
-                    var asm = Assembly.GetExecutingAssembly();
-                    var dir = Path.GetDirectoryName(asm.Location) ?? ".";
-                    _commandDir = Path.Combine(dir, "iml_cmds");
+                    _commandDir = Path.Combine(pluginDir, "iml_cmds");
                     if (!Directory.Exists(_commandDir)) Directory.CreateDirectory(_commandDir);
                 }
                 catch { _commandDir = null; }

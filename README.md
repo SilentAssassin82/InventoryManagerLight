@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.1.1  
+> **Version:** 1.1.2  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -347,6 +347,22 @@ When something goes wrong, please grab:
 ### Where to report
 
 Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
+
+---
+
+## Changelog
+
+### v1.1.2
+- **Blueprint subtype fix:** IML now uses `MyDefinitionManager` to resolve the correct blueprint for each item at runtime. Mods that rename vanilla components (e.g. `MotorComponent` → `Motor`, `MedicalComponent` → `Medical`) while keeping the original blueprint SubtypeId will now queue and track correctly. No config changes needed.
+
+### v1.1.1
+- **DC fix:** assembler `AddQueueItem` calls are now spread one-per-tick (deferred queue) instead of firing all at once, eliminating client disconnects when the K menu is open during a scan.
+- **Stock count fix:** item totals are now counted across all inventory blocks in the same conveyor group (not just IML-tagged containers), so items sitting in untagged cargo containers are visible and do not trigger infinite re-queuing.
+- `!iml stockdump <SubtypeId>` command added for diagnosing unexpected stock counts.
+- Pirate/NPC faction containers are excluded from sorting.
+
+### v1.1.0
+- Initial public release.
 
 ---
 

@@ -134,7 +134,7 @@ IML:MIN=Motor:500
 
 **Block name (single line, if you prefer):**
 ```
-Assembler [IML:MIN=SteelPlate:1000,MotorComponent:500]
+Assembler [IML:MIN=SteelPlate:1000,Motor:500]
 ```
 
 Multiple items can be combined on a single line in either location:

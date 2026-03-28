@@ -191,6 +191,7 @@ Keys are **SubtypeId** values as they appear in Space Engineers (case-insensitiv
 | Small Steel Tube | `SmallTube` |
 | Large Steel Tube | `LargeTube` |
 | Computer | `ComputerComponent` |
+| Gravity Generator Comp. | `GravityGeneratorComponent` |
 | Reactor Component | `ReactorComponent` |
 | Thruster Component | `ThrustComponent` |
 

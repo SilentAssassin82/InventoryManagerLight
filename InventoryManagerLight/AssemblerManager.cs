@@ -152,17 +152,11 @@ namespace InventoryManagerLight
                 return diag;
             }
 
-            // Build inventory totals by item subtype, scoped to the conveyor-connected grid groups
-            // that contain our assemblers. ALL inventory blocks in those groups are counted — not
-            // just IML-tagged ones — so stock sitting in normal untagged cargo containers is visible.
-            // NPC/pirate grids are excluded automatically because they are never in the same
-            // conveyor group as a player assembler.
-            // Production block INPUT inventories (index 0) are excluded — materials already pulled
-            // into an assembler/refinery input are committed to the current job.
-
-            // Determine relevant conveyor group keys (one GetGroup call per unique grid, cached).
+            // Build per-conveyor-group item totals and assembler lists so that each independent
+            // network (base, ship, outpost) checks only the stock it can physically reach.
+            // Assemblers on disconnected grids are treated as separate autonomous units.
             var gridGroupKeyCache = new Dictionary<long, long>();
-            var relevantGroupKeys = new HashSet<long>();
+            var assemblersByGroup = new Dictionary<long, List<Sandbox.ModAPI.IMyAssembler>>();
             foreach (var asm in assemblers)
             {
                 try
@@ -172,12 +166,17 @@ namespace InventoryManagerLight
                     long gk;
                     if (!gridGroupKeyCache.TryGetValue(grid.EntityId, out gk))
                     { gk = InventoryManager.GetConveyorGroupKey(grid); gridGroupKeyCache[grid.EntityId] = gk; }
-                    relevantGroupKeys.Add(gk);
+                    List<Sandbox.ModAPI.IMyAssembler> asmList;
+                    if (!assemblersByGroup.TryGetValue(gk, out asmList))
+                    { asmList = new List<Sandbox.ModAPI.IMyAssembler>(); assemblersByGroup[gk] = asmList; }
+                    asmList.Add(asm);
                 }
                 catch { }
             }
 
-            var totals = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            // Count inventory stock per conveyor group. Production input slots (index 0) are
+            // excluded — materials already in an assembler input are committed to the current job.
+            var groupTotals = new Dictionary<long, Dictionary<string, double>>();
             foreach (var tb in allBlocks)
             {
                 try
@@ -187,12 +186,15 @@ namespace InventoryManagerLight
                     long gk;
                     if (!gridGroupKeyCache.TryGetValue(grid.EntityId, out gk))
                     { gk = InventoryManager.GetConveyorGroupKey(grid); gridGroupKeyCache[grid.EntityId] = gk; }
-                    if (!relevantGroupKeys.Contains(gk)) continue;
+                    if (!assemblersByGroup.ContainsKey(gk)) continue; // no assembler in this group
 
                     bool isProduction = tb is Sandbox.ModAPI.IMyProductionBlock;
-                    if (isProduction && tb.InventoryCount < 2) continue; // single-inv production blocks have no output slot
-                    int startSlot = isProduction ? 1 : 0; // skip production input (index 0)
+                    if (isProduction && tb.InventoryCount < 2) continue;
+                    int startSlot = isProduction ? 1 : 0;
 
+                    Dictionary<string, double> groupTotal;
+                    if (!groupTotals.TryGetValue(gk, out groupTotal))
+                    { groupTotal = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase); groupTotals[gk] = groupTotal; }
                     for (int i = startSlot; i < tb.InventoryCount; i++)
                     {
                         try
@@ -204,8 +206,8 @@ namespace InventoryManagerLight
                             foreach (var it in items)
                             {
                                 var sub = it.Type.SubtypeId;
-                                double prev; totals.TryGetValue(sub, out prev);
-                                totals[sub] = prev + (double)it.Amount;
+                                double prev; groupTotal.TryGetValue(sub, out prev);
+                                groupTotal[sub] = prev + (double)it.Amount;
                             }
                         }
                         catch { }
@@ -215,14 +217,24 @@ namespace InventoryManagerLight
             }
 
             // --- Phase 1: CustomData-tagged assemblers ---
-            // Each tagged assembler owns its items exclusively. Only that assembler's
-            // existing queue is checked, and only that assembler receives new queue items.
-            var claimedByCustomData = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Each tagged assembler owns its items exclusively within its own conveyor group.
+            // claimedByCustomData is keyed by group so that a tagged assembler on base A does
+            // not suppress global-config queuing on an independent base B.
+            var claimedByCustomData = new Dictionary<long, HashSet<string>>();
 
             foreach (var asm in assemblers)
             {
                 Dictionary<string, int> thresholds;
                 if (!customDataThresholds.TryGetValue(asm.EntityId, out thresholds)) continue;
+
+                long asmGk = 0;
+                var asmGrid = asm.CubeGrid as VRage.Game.ModAPI.IMyCubeGrid;
+                if (asmGrid != null) gridGroupKeyCache.TryGetValue(asmGrid.EntityId, out asmGk);
+                Dictionary<string, double> totals;
+                if (!groupTotals.TryGetValue(asmGk, out totals)) totals = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> groupClaimed;
+                if (!claimedByCustomData.TryGetValue(asmGk, out groupClaimed))
+                { groupClaimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase); claimedByCustomData[asmGk] = groupClaimed; }
 
                 // Read this assembler's own queue
                 var asmQueued = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -243,7 +255,7 @@ namespace InventoryManagerLight
 
                 foreach (var kv in thresholds)
                 {
-                    claimedByCustomData.Add(kv.Key);
+                    groupClaimed.Add(kv.Key);
                     try
                     {
                         double current; totals.TryGetValue(kv.Key, out current);
@@ -287,85 +299,97 @@ namespace InventoryManagerLight
             }
 
             // --- Phase 2: Global config fallback ---
-            // Items not claimed by any tagged assembler use the least-loaded assembler.
+            // Each conveyor group independently checks its own stock and queues in its own
+            // least-loaded assembler. Items claimed by a tagged assembler in that group are skipped.
             if (!hasGlobalThresholds) return diag;
 
-            // Sum queued amounts across all assemblers for global items
-            var globalQueued = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-            foreach (var asm in assemblers)
+            foreach (var groupEntry in assemblersByGroup)
             {
-                try
+                long groupKey = groupEntry.Key;
+                var groupAssemblers = groupEntry.Value;
+                Dictionary<string, double> totals;
+                if (!groupTotals.TryGetValue(groupKey, out totals)) totals = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> groupClaimed;
+                if (!claimedByCustomData.TryGetValue(groupKey, out groupClaimed)) groupClaimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                // Sum queued amounts for assemblers in this group only
+                var globalQueued = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                foreach (var asm in groupAssemblers)
                 {
-                    var queue = new List<Sandbox.ModAPI.Ingame.MyProductionItem>();
-                    asm.GetQueue(queue);
-                    foreach (var qi in queue)
+                    try
                     {
-                        var bpSub = qi.BlueprintId.SubtypeId.String;
-                        string sub;
-                        if (!_blueprintToItemSubtype.TryGetValue(bpSub, out sub)) sub = bpSub;
-                        double prev; globalQueued.TryGetValue(sub, out prev);
-                        globalQueued[sub] = prev + (double)qi.Amount;
-                    }
-                }
-                catch { }
-            }
-
-            diag.Add("  [GlobalConfig]");
-            foreach (var kv in _config.AssemblerThresholds)
-            {
-                if (claimedByCustomData.Contains(kv.Key)) { diag.Add($"    {kv.Key}: claimed by tagged assembler — skipped"); continue; }
-                try
-                {
-                    double current; totals.TryGetValue(kv.Key, out current);
-                    double alreadyQueued; globalQueued.TryGetValue(kv.Key, out alreadyQueued);
-                    double projected = current + alreadyQueued;
-                    if (projected >= kv.Value)
-                    {
-                        diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — OK");
-                        continue;
-                    }
-
-                    // Ceiling prevents float-precision truncation causing off-by-one
-                    int deficit = (int)Math.Ceiling(kv.Value - projected);
-                    VRage.Game.MyDefinitionId blueprintId;
-                    if (!ResolveBlueprintForItem(kv.Key, out blueprintId))
-                    {
-                        _logger?.Debug($"IML: AssemblerManager: no blueprint for '{kv.Key}' — check subtype name in AssemblerThresholds config");
-                        diag.Add($"    {kv.Key}: NO BLUEPRINT — check subtype spelling");
-                        continue;
-                    }
-
-                    // Pick the assembler with the shortest queue
-                    Sandbox.ModAPI.IMyAssembler target = null;
-                    int minQueueLen = int.MaxValue;
-                    foreach (var asm in assemblers)
-                    {
-                        try
+                        var queue = new List<Sandbox.ModAPI.Ingame.MyProductionItem>();
+                        asm.GetQueue(queue);
+                        foreach (var qi in queue)
                         {
-                            var q = new List<Sandbox.ModAPI.Ingame.MyProductionItem>();
-                            asm.GetQueue(q);
-                            if (q.Count < minQueueLen) { minQueueLen = q.Count; target = asm; }
+                            var bpSub = qi.BlueprintId.SubtypeId.String;
+                            string sub;
+                            if (!_blueprintToItemSubtype.TryGetValue(bpSub, out sub)) sub = bpSub;
+                            double prev; globalQueued.TryGetValue(sub, out prev);
+                            globalQueued[sub] = prev + (double)qi.Amount;
                         }
-                        catch { if (target == null) target = asm; }
                     }
-                    if (target == null) continue;
-
-                    _pendingAdditions.Enqueue(new PendingQueueAddition
-                    {
-                        Asm = target,
-                        Blueprint = blueprintId,
-                        Amount = (VRage.MyFixedPoint)deficit,
-                        LogMessage = $"IML: Auto-queued {deficit:N0}x {kv.Key} in '{target.CustomName}' [GlobalConfig] (stock:{current:N0} queued:{alreadyQueued:N0} target:{kv.Value:N0})"
-                    });
-                    diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — QUEUED {deficit:N0} in '{target.CustomName}'");
-
-                    double q2; globalQueued.TryGetValue(kv.Key, out q2);
-                    globalQueued[kv.Key] = q2 + deficit;
+                    catch { }
                 }
-                catch (Exception ex)
+
+                string groupLabel = assemblersByGroup.Count > 1 ? $"  [GlobalConfig / group {groupKey}]" : "  [GlobalConfig]";
+                diag.Add(groupLabel);
+                foreach (var kv in _config.AssemblerThresholds)
                 {
-                    _logger?.Debug($"IML: AssemblerManager: exception for '{kv.Key}': {ex.Message}");
-                    diag.Add($"    {kv.Key}: ERROR — {ex.Message}");
+                    if (groupClaimed.Contains(kv.Key)) { diag.Add($"    {kv.Key}: claimed by tagged assembler — skipped"); continue; }
+                    try
+                    {
+                        double current; totals.TryGetValue(kv.Key, out current);
+                        double alreadyQueued; globalQueued.TryGetValue(kv.Key, out alreadyQueued);
+                        double projected = current + alreadyQueued;
+                        if (projected >= kv.Value)
+                        {
+                            diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — OK");
+                            continue;
+                        }
+
+                        // Ceiling prevents float-precision truncation causing off-by-one
+                        int deficit = (int)Math.Ceiling(kv.Value - projected);
+                        VRage.Game.MyDefinitionId blueprintId;
+                        if (!ResolveBlueprintForItem(kv.Key, out blueprintId))
+                        {
+                            _logger?.Debug($"IML: AssemblerManager: no blueprint for '{kv.Key}' — check subtype name in AssemblerThresholds config");
+                            diag.Add($"    {kv.Key}: NO BLUEPRINT — check subtype spelling");
+                            continue;
+                        }
+
+                        // Pick the assembler with the shortest queue within this group
+                        Sandbox.ModAPI.IMyAssembler target = null;
+                        int minQueueLen = int.MaxValue;
+                        foreach (var asm in groupAssemblers)
+                        {
+                            try
+                            {
+                                var q = new List<Sandbox.ModAPI.Ingame.MyProductionItem>();
+                                asm.GetQueue(q);
+                                if (q.Count < minQueueLen) { minQueueLen = q.Count; target = asm; }
+                            }
+                            catch { if (target == null) target = asm; }
+                        }
+                        if (target == null) continue;
+
+                        _pendingAdditions.Enqueue(new PendingQueueAddition
+                        {
+                            Asm = target,
+                            Blueprint = blueprintId,
+                            Amount = (VRage.MyFixedPoint)deficit,
+                            LogMessage = $"IML: Auto-queued {deficit:N0}x {kv.Key} in '{target.CustomName}' [GlobalConfig] (stock:{current:N0} queued:{alreadyQueued:N0} target:{kv.Value:N0})"
+                        });
+                        diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — QUEUED {deficit:N0} in '{target.CustomName}'");
+
+                        double q2; globalQueued.TryGetValue(kv.Key, out q2);
+                        globalQueued[kv.Key] = q2 + deficit;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.Debug($"IML: AssemblerManager: exception for '{kv.Key}': {ex.Message}");
+                        diag.Add($"    {kv.Key}: ERROR — {ex.Message}");
+                    }
                 }
             }
             return diag;

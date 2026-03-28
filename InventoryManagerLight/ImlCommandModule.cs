@@ -41,9 +41,30 @@ namespace InventoryManagerLight
             var p = Plugin;
             if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
             int count = p.Manager.TriggerSortAll();
-            Context.Respond(count > 0
-                ? $"IML: Sort triggered for {count} managed container(s)."
-                : "IML: No managed containers found. Tag containers with 'IML:CATEGORY' in the block name or CustomData.");
+            if (count == -1)
+                Context.Respond("IML: Sort aborted — server is under load (block enumeration exceeded time budget). Try again in a moment, or increase MaxSortMs in the plugin config.");
+            else if (count > 0)
+                Context.Respond($"IML: Sort triggered for {count} managed container(s).");
+            else
+                Context.Respond("IML: No managed containers found. Tag containers with 'IML:CATEGORY' in the block name or CustomData.");
+        }
+
+        [Command("queueall", "Immediately runs the assembler auto-queue scan and reports results.")]
+        public void QueueAll()
+        {
+            var p = Plugin;
+            if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            var lines = p.Manager.TriggerAssemblerScan();
+            if (lines == null || lines.Count == 0)
+            {
+                Context.Respond("IML: Assembler scan returned no output. Make sure at least one assembler has IML:MIN= in its CustomData or block name.");
+                return;
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine("IML: Assembler scan results:");
+            foreach (var line in lines)
+                sb.AppendLine(line);
+            Context.Respond(sb.ToString().TrimEnd());
         }
 
         [Command("list", "Lists all IML-tagged containers with their entity ids.")]
@@ -80,6 +101,23 @@ namespace InventoryManagerLight
                     sb.AppendLine("  " + line);
                 Context.Respond(sb.ToString().TrimEnd());
             }
+
+        [Command("stockdump", "Shows every inventory slot that contains the given item subtype.")]
+        public void StockDump(string subtype)
+        {
+            var p = Plugin;
+            if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            if (string.IsNullOrWhiteSpace(subtype))
+            {
+                Context.Respond("IML: Usage: !iml stockdump <SubtypeId>   e.g. !iml stockdump SteelPlate");
+                return;
+            }
+            var lines = p.Manager.StockDump(subtype);
+            var sb = new StringBuilder();
+            foreach (var line in lines)
+                sb.AppendLine(line);
+            Context.Respond(sb.ToString().TrimEnd());
+        }
         }
     }
     #endif

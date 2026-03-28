@@ -74,15 +74,18 @@ namespace InventoryManagerLight
                 return r;
             }
 
-            // check customData first (line-based)
+            // check customData first (line-based) — scan each line so directive-only lines
+            // (IML:MIN=, IML:DENY=, IML:NoDrain, etc.) are skipped and never parsed as categories.
             if (!string.IsNullOrWhiteSpace(customData))
             {
-                var idx = customData.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-                if (idx >= 0)
+                foreach (var cdLine in customData.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
                 {
-                    var token = customData.Substring(idx + prefix.Length);
-                    var firstLine = token.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? token;
-                    var r = proc(firstLine);
+                    var trimmedCd = cdLine.Trim();
+                    var prefIdx = trimmedCd.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+                    if (prefIdx < 0) continue;
+                    var tokenAfterPrefix = trimmedCd.Substring(prefIdx + prefix.Length);
+                    if (IsDirectiveToken(tokenAfterPrefix.Trim())) continue;
+                    var r = proc(tokenAfterPrefix);
                     ScanFilters(customData, ref r);
                     return r;
                 }
@@ -110,7 +113,7 @@ namespace InventoryManagerLight
             var idx = name.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
             if (idx < 0) return Array.Empty<string>();
             var token = name.Substring(idx + prefix.Length).Trim();
-            if (string.IsNullOrWhiteSpace(token)) return Array.Empty<string>();
+            if (string.IsNullOrWhiteSpace(token) || IsDirectiveToken(token)) return Array.Empty<string>();
             return token.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim().ToUpperInvariant()).ToArray();
         }
 
@@ -118,13 +121,14 @@ namespace InventoryManagerLight
         public static string[] GetCategoriesFromCustomData(string customData, string prefix)
         {
             if (string.IsNullOrWhiteSpace(customData)) return Array.Empty<string>();
-            // simple search for prefix
-            var idx = customData.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0)
+            foreach (var cdLine in customData.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                var token = customData.Substring(idx + prefix.Length);
-                var firstLine = token.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? token;
-                return firstLine.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim().ToUpperInvariant()).ToArray();
+                var trimmedCd = cdLine.Trim();
+                var prefIdx = trimmedCd.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+                if (prefIdx < 0) continue;
+                var token = trimmedCd.Substring(prefIdx + prefix.Length).Trim();
+                if (IsDirectiveToken(token)) continue;
+                return token.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim().ToUpperInvariant()).ToArray();
             }
             return Array.Empty<string>();
         }
@@ -141,6 +145,24 @@ namespace InventoryManagerLight
         public static bool IsManaged(string name, string customData, string prefix)
         {
             return GetCategories(name, customData, prefix).Length > 0;
+        }
+
+        // Tokens that follow the prefix but are NOT category names — used to skip directive lines
+        // when searching for a container category tag.
+        private static readonly string[] _directiveTokenPrefixes = new[]
+        {
+            "MIN=", "DENY=", "ALLOW=", "NoDrain", "LCD", "SortNow"
+        };
+
+        private static bool IsDirectiveToken(string token)
+        {
+            if (string.IsNullOrWhiteSpace(token)) return false;
+            foreach (var d in _directiveTokenPrefixes)
+            {
+                if (token.StartsWith(d, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         // Scan all lines of customData for IML:DENY= and IML:ALLOW= tokens.

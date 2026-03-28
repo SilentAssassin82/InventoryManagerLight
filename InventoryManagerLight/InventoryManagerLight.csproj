@@ -103,6 +103,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AssemblerManager.cs" />
     <Compile Include="CategoryResolver.cs" />
     <Compile Include="ConsumerScanner.cs" />
     <Compile Include="ContainerMatcher.cs" />

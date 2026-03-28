@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.0.0  
+> **Version:** 1.1.0  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -116,6 +116,93 @@ By default, IML will pull finished items out of production block output inventor
 
 ---
 
+## Assembler Auto-Queuing
+
+IML can automatically queue blueprints in assemblers to maintain minimum stock levels. Two modes work simultaneously — per-assembler CustomData takes priority, global config is the fallback.
+
+### Per-Assembler Tag (recommended)
+
+Add one or more `IML:MIN=` lines to an assembler's **CustomData**. That assembler becomes the *exclusive* producer for the listed items — no other assembler will queue them.
+
+> **Where to put it:** CustomData supports multiple lines and is recommended. The block name also works but only supports a single `IML:MIN=` entry.
+
+**CustomData (multi-line, recommended):**
+```
+IML:MIN=SteelPlate:1000
+IML:MIN=MotorComponent:500
+```
+
+**Block name (single line, if you prefer):**
+```
+Assembler [IML:MIN=SteelPlate:1000,MotorComponent:500]
+```
+
+Multiple items can be combined on a single line in either location:
+
+```
+IML:MIN=SteelPlate:1000,MotorComponent:500,Construction:2000
+```
+
+**How it works:**
+- Each scan pass reads the assembler's current queue + actual inventory for the listed items
+- If `current stock + already queued < target`, the deficit is added to *this assembler's* queue
+- Items declared via `IML:MIN=` are owned exclusively by that assembler — the global config fallback will not also queue them
+
+**Example — dedicated assembler per product line:**
+
+*Assembler A CustomData:*
+```
+IML:MIN=SteelPlate:2000
+IML:MIN=InteriorPlate:1000
+```
+
+*Assembler B CustomData:*
+```
+IML:MIN=MotorComponent:500,SmallTube:800
+```
+
+---
+
+### Global Config Fallback
+
+> **Note:** The global config fallback requires modifying the plugin source code and rebuilding — there is no editable config file on the server. For most setups, per-assembler `IML:MIN=` tags in CustomData are the recommended approach and require no code changes.
+
+If you are building the plugin yourself, you can set server-wide fallback thresholds in `RuntimeConfig.cs` for items *not* claimed by any CustomData assembler. The least-loaded assembler (shortest current queue) is chosen automatically.
+
+```csharp
+config.AssemblerThresholds["SteelPlate"] = 500;
+config.AssemblerThresholds["MotorComponent"] = 200;
+```
+
+> If an item appears in both a CustomData `IML:MIN=` tag **and** the global config, the CustomData assembler wins and the global entry is skipped for that item.
+
+---
+
+### Subtype Names
+
+Keys are **SubtypeId** values as they appear in Space Engineers (case-insensitive). Common examples:
+
+| Item | SubtypeId |
+|------|-----------|
+| Steel Plate | `SteelPlate` |
+| Motor | `MotorComponent` |
+| Construction Comp. | `Construction` |
+| Small Steel Tube | `SmallTube` |
+| Large Steel Tube | `LargeTube` |
+| Computer | `ComputerComponent` |
+| Reactor Component | `ReactorComponent` |
+| Thruster Component | `ThrustComponent` |
+
+If a subtype name is wrong, IML will log a debug message: `IML: AssemblerManager: no blueprint for 'XYZ'` — check the Torch log and correct the spelling.
+
+---
+
+### Assembler Scan Interval
+
+Auto-queuing runs every **`AssemblerScanIntervalTicks`** (default: 3 600 ticks ≈ 60 seconds). Set to `0` to disable assembler auto-queuing entirely.
+
+---
+
 ### LCD Display Panels
 
 ```
@@ -146,8 +233,10 @@ All commands are entered in the Torch console (or server chat with appropriate p
 |---------|-------------|
 | `!iml status` | Shows plugin statistics: total sort passes, operations completed, items moved, and current config values |
 | `!iml sortall` | Triggers an immediate full sort pass across all grids right now |
+| `!iml queueall` | Immediately runs the assembler auto-queue scan and prints per-assembler results (found/queued/OK/error) |
 | `!iml sort <entityId>` | Triggers an immediate sort pass for the grid containing the given entity ID |
 | `!iml list` | Lists all containers currently tracked by IML with their tags and categories |
+| `!iml stockdump <SubtypeId>` | Shows every inventory slot containing the specified item, with amounts and slot type. Slots inside assembler/refinery input inventories are flagged `[SKIPPED by ScanAndQueue]`. Use this to diagnose unexpected stock counts — e.g. `!iml stockdump SteelPlate` |
 | `!iml dump` | Dumps detailed internal state to the Torch log for debugging |
 
 ---
@@ -162,13 +251,17 @@ When grids connect (docking, merge blocks, rotor/hinge attachment with conveyor 
 
 ## Configuration
 
-Configuration is handled at startup via `RuntimeConfig`. Current defaults:
+All settings are compiled-in defaults in `RuntimeConfig.cs` — there is no editable config file on the server. To change defaults, modify `RuntimeConfig.cs` and rebuild the plugin. In-game configuration is done entirely through block **CustomData** tags (see above).
+
+Current defaults:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `AutoSortIntervalTicks` | `6000` | Ticks between automatic sort passes (~2 min at 60 UPS) |
 | `LcdUpdateIntervalTicks` | `300` | Ticks between LCD refreshes (~5 sec) |
 | `DrainProductionOutputs` | `true` | Whether to pull finished items from assembler/refinery output slots |
+| `AssemblerScanIntervalTicks` | `3600` | Ticks between assembler auto-queue scans (~60 sec). Set to `0` to disable |
+| `AssemblerThresholds` | *(empty)* | Global per-subtype minimum stock targets for assembler auto-queuing (fallback when no `IML:MIN=` tag claims the item) |
 | `RestrictToConveyorConnectedGrids` | `false` | If true, only sorts within connected conveyor networks (experimental) |
 
 ---
@@ -207,6 +300,15 @@ IML:LCD=ORE
 IML:NoDrain
 ```
 
+**Assembler dedicated to plates and tubes only:**
+```
+IML:MIN=SteelPlate:2000
+IML:MIN=SmallTube:1000,LargeTube:500
+```
+
+**Assembler that handles all other components (global config fallback):**
+*(no CustomData tag needed — add entries to `AssemblerThresholds` in `RuntimeConfig.cs` if building from source)*
+
 ---
 
 ## Performance Notes
@@ -229,6 +331,7 @@ This plugin has been tested on a live server with a small number of accounts. To
 - **Docking/undocking** — connect and disconnect grids mid-sort pass
 - **Edge-case tags** — weird subtype names in DENY/ALLOW, multiple LCD panels on one grid
 - **Production stress** — dozens of assemblers/refineries with DrainProductionOutputs enabled
+- **Assembler auto-queuing** — multiple assemblers each with different `IML:MIN=` sets, verify no item is double-queued across assemblers; mix CustomData and global config thresholds on the same server
 - **Creative mode** — overfill scenarios, volume bypass behavior
 - **Mixed categories** — containers with ALLOW lists that overlap across category types
 - **Rapid `!iml sortall`** — spam the command while grids are active to stress the background queue

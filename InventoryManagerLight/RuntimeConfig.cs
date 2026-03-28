@@ -63,7 +63,13 @@ namespace InventoryManagerLight
 
         // Interval in ticks to poll blocks for a SortNow button flag in CustomData (IML:SortNow=...).
         // Set to 0 to disable automatic polling; otherwise plugin will scan every N ticks.
-        public int SortScanIntervalTicks { get; set; } = 10;
+        // Default: 600 (~10 seconds). Was 10 — too frequent for large servers under load.
+        public int SortScanIntervalTicks { get; set; } = 600;
+
+        // Max milliseconds TriggerSortAll() and the SortNow scan may spend on the game thread
+        // before aborting. Prevents client disconnects on large/loaded servers.
+        // Default: 100ms.
+        public int MaxSortMs { get; set; } = 100;
 
         // Number of game ticks between automatic sort passes (60 ticks ≈ 1 second).
         // Set to 0 to disable periodic auto-sort and rely on '!iml sortall' or the SortNow button.
@@ -82,6 +88,23 @@ namespace InventoryManagerLight
         // Set to 0 to disable LCD updates.
         // Default: 300 (~5 seconds).
         public int LcdUpdateIntervalTicks { get; set; } = 300;
+
+        // Per-category minimum stock thresholds. When a category's total item count falls below
+        // its threshold the LCD display and '!iml status' will flag it with a [!] / [LOW] marker.
+        // Example: { "INGOTS": 5000, "COMPONENTS": 1000 }
+        // Leave empty (default) to disable low-stock alerts.
+        public Dictionary<string, int> MinStockThresholds { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // Per item-subtype minimum stock targets for assembler auto-queuing.
+        // When actual inventory + already-queued amount falls below the target, the deficit is
+        // automatically queued in the least-loaded assembler in Assembly mode.
+        // Keys are item subtype names as they appear in SE (e.g. "SteelPlate", "MotorComponent").
+        // Leave empty (default) to disable auto-queuing.
+        public Dictionary<string, int> AssemblerThresholds { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // Interval in game ticks between assembler auto-queue scans (60 ticks ≈ 1 second).
+        // Default: 3600 (~60 seconds). Set to 0 to disable.
+        public int AssemblerScanIntervalTicks { get; set; } = 3600;
 
         // Demand decay factor applied each scan. Values multiplied by this factor (0..1). 0.5 halves demand each scan.
         public double DemandDecayFactor { get; set; } = 0.5;

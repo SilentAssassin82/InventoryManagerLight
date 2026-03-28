@@ -5,6 +5,7 @@ using System.Collections.Generic;
 #else
 using System.Collections.Generic;
 #endif
+using System.Diagnostics;
 using System.Linq;
 #if TORCH
 using Sandbox.ModAPI;
@@ -30,6 +31,7 @@ namespace InventoryManagerLight
         private readonly ConveyorScanner _conveyorScanner;
         private int _tickCounter;
         private int _totalSortPasses;
+        private readonly AssemblerManager _assemblerManager;
         // Sentinel category used to mark production block output snapshots as drain-only sources.
         // Not in CategoryMappings so ItemMatchesCategory always returns false — every item is misplaced.
         private const string DrainSentinelCategory = "__DRAIN__";
@@ -57,6 +59,7 @@ namespace InventoryManagerLight
 #else
             _applier = new ThrottledApplier(_batchQueue, _config, _logger);
 #endif
+            _assemblerManager = new AssemblerManager(_config, _logger);
         }
 
         // Allow constructing with a provided adapter (e.g., real Torch adapter)
@@ -75,6 +78,7 @@ namespace InventoryManagerLight
             var resolver = new CategoryResolver(_config);
             _planner = new Planner(_snapshotQueue, _batchQueue, _config, _logger, resolver);
             _applier = new ThrottledApplier(_batchQueue, _config, adapter ?? new DefaultInventoryAdapter(), _logger);
+            _assemblerManager = new AssemblerManager(_config, _logger);
         }
 
         public void EnqueueReplan(ReplanRequest req)
@@ -154,39 +158,53 @@ namespace InventoryManagerLight
 #if TORCH
                     try
                     {
-                        foreach (var tb in GetAllTerminalBlocks())
+                        var scanSw = Stopwatch.StartNew();
+                        var scanBlocks = GetAllTerminalBlocks();
+                        if (scanSw.ElapsedMilliseconds > _config.MaxSortMs)
                         {
-                            try
+                            _logger?.Warn($"IML: SortNow scan aborted — block enumeration took {scanSw.ElapsedMilliseconds}ms (budget: {_config.MaxSortMs}ms). Server under load.");
+                        }
+                        else
+                        {
+                            foreach (var tb in scanBlocks)
                             {
-                                string cd = null;
-                                try { cd = (string)tb.GetType().GetProperty("CustomData")?.GetValue(tb); } catch { }
-                                if (string.IsNullOrEmpty(cd)) continue;
-                                var idx = cd.IndexOf(_config.ContainerTagPrefix + "SortNow=", StringComparison.OrdinalIgnoreCase);
-                                if (idx >= 0)
+                                if (scanSw.ElapsedMilliseconds > _config.MaxSortMs)
                                 {
-                                    // parse value after equals
-                                    var token = cd.Substring(idx + (_config.ContainerTagPrefix?.Length ?? 0));
-                                    var line = token.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? token;
-                                    var eq = line.IndexOf('=');
-                                    if (eq >= 0)
+                                    _logger?.Warn($"IML: SortNow scan aborted mid-loop after {scanSw.ElapsedMilliseconds}ms.");
+                                    break;
+                                }
+                                try
+                                {
+                                    string cd = null;
+                                    try { cd = (string)tb.GetType().GetProperty("CustomData")?.GetValue(tb); } catch { }
+                                    if (string.IsNullOrEmpty(cd)) continue;
+                                    var idx = cd.IndexOf(_config.ContainerTagPrefix + "SortNow=", StringComparison.OrdinalIgnoreCase);
+                                    if (idx >= 0)
                                     {
-                                        var val = line.Substring(eq + 1).Trim();
-                                        if (val == "1" || string.Equals(val, "true", StringComparison.OrdinalIgnoreCase))
+                                        // parse value after equals
+                                        var token = cd.Substring(idx + (_config.ContainerTagPrefix?.Length ?? 0));
+                                        var line = token.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? token;
+                                        var eq = line.IndexOf('=');
+                                        if (eq >= 0)
                                         {
-                                            // trigger sort and clear flag
-                                            try { TriggerSortForOwner(tb.EntityId); } catch { }
-                                            try
+                                            var val = line.Substring(eq + 1).Trim();
+                                            if (val == "1" || string.Equals(val, "true", StringComparison.OrdinalIgnoreCase))
                                             {
-                                                // remove the SortNow token from CustomData
-                                                var newCd = cd.Replace(_config.ContainerTagPrefix + line, string.Empty);
-                                                tb.GetType().GetProperty("CustomData")?.SetValue(tb, newCd);
+                                                // trigger sort and clear flag
+                                                try { TriggerSortForOwner(tb.EntityId); } catch { }
+                                                try
+                                                {
+                                                    // remove the SortNow token from CustomData
+                                                    var newCd = cd.Replace(_config.ContainerTagPrefix + line, string.Empty);
+                                                    tb.GetType().GetProperty("CustomData")?.SetValue(tb, newCd);
+                                                }
+                                                catch { }
                                             }
-                                            catch { }
                                         }
                                     }
                                 }
+                                catch { }
                             }
-                            catch { }
                         }
                     }
                     catch { }
@@ -199,6 +217,23 @@ namespace InventoryManagerLight
             if (_config.AutoSortIntervalTicks > 0 && (_tickCounter % Math.Max(1, _config.AutoSortIntervalTicks)) == 0)
             {
                 try { TriggerSortAll(); } catch { }
+            }
+
+            // Assembler auto-queue scan — runs every AssemblerScanIntervalTicks game ticks.
+            if (_config.AssemblerScanIntervalTicks > 0 && (_tickCounter % Math.Max(1, _config.AssemblerScanIntervalTicks)) == 0)
+            {
+#if TORCH
+                try
+                {
+                    var asmSw = Stopwatch.StartNew();
+                    var asmBlocks = GetAllTerminalBlocks();
+                    if (asmSw.ElapsedMilliseconds > _config.MaxSortMs)
+                        _logger?.Warn($"IML: AssemblerScan skipped — block enumeration took {asmSw.ElapsedMilliseconds}ms (budget: {_config.MaxSortMs}ms).");
+                    else
+                        _assemblerManager.ScanAndQueue(asmBlocks);
+                }
+                catch { }
+#endif
             }
 
             // LCD panel refresh — runs every LcdUpdateIntervalTicks game ticks.
@@ -397,7 +432,9 @@ namespace InventoryManagerLight
                 {
                     int ctns = catContainers[cat];
                     int total = 0; catItems.TryGetValue(cat, out total);
-                    sb.AppendLine($"{cat,-12} {ctns,2}x {total,9:N0}");
+                    int threshold;
+                    bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold;
+                    sb.AppendLine($"{cat,-12} {ctns,2}x {total,9:N0}{(isLow ? " [!]" : "")}");
                 }
                 sb.Append($"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}");
             }
@@ -406,8 +443,10 @@ namespace InventoryManagerLight
                 sb.AppendLine($"[IML: {filter}]");
                 int ctns = 0;  catContainers.TryGetValue(filter, out ctns);
                 int total = 0; catItems.TryGetValue(filter, out total);
+                int threshold;
+                bool isLow = _config.MinStockThresholds.TryGetValue(filter, out threshold) && total < threshold;
                 sb.AppendLine($" {ctns} container(s)");
-                sb.Append($" {total:N0} items");
+                sb.Append($" {total:N0} items{(isLow ? $" [! LOW — min {threshold:N0}]" : "")}");
             }
             return sb.ToString().TrimEnd();
         }
@@ -422,7 +461,13 @@ namespace InventoryManagerLight
             try
             {
 #if TORCH
+                var sw = Stopwatch.StartNew();
                 var allBlocks = GetAllTerminalBlocks();
+                if (sw.ElapsedMilliseconds > _config.MaxSortMs)
+                {
+                    _logger?.Warn($"IML: SortAll aborted \u2014 block enumeration took {sw.ElapsedMilliseconds}ms (budget: {_config.MaxSortMs}ms). Server under load. Increase MaxSortMs in config if needed.");
+                    return -1;
+                }
                 // Group snapshots by conveyor-connected grid group. Each independent cluster
                 // (base, docked ships, etc.) gets its own sort pass so unrelated grids never mix.
                 var groupSnaps = new Dictionary<long, List<InventorySnapshot>>();
@@ -523,6 +568,26 @@ namespace InventoryManagerLight
             return count;
         }
 
+        // Immediately runs the assembler auto-queue scan and returns per-assembler diagnostic lines.
+        // Must be called from the game thread.
+        public List<string> TriggerAssemblerScan()
+        {
+            var result = new List<string>();
+            try
+            {
+#if TORCH
+                var blocks = GetAllTerminalBlocks();
+                var lines = _assemblerManager.ScanAndQueue(blocks);
+                if (lines != null) result.AddRange(lines);
+#endif
+            }
+            catch (Exception ex)
+            {
+                result.Add("ERROR: " + ex.Message);
+            }
+            return result;
+        }
+
         // Returns a human-readable list of managed containers for the !iml list command.
         // Must be called from the game thread.
         public List<string> GetManagedContainerInfo()
@@ -610,11 +675,73 @@ namespace InventoryManagerLight
                     int items = 0;
                     catItems.TryGetValue(cat, out items);
                     var cLabel = containers == 1 ? "container" : "containers";
-                    result.Add($"{cat,-12} {containers,2} {cLabel}, {items,9:N0} item(s)");
+                    int threshold;
+                    bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && items < threshold;
+                    var lowNote = isLow ? $"  [LOW — min {threshold:N0}]" : "";
+                    result.Add($"{cat,-12} {containers,2} {cLabel}, {items,9:N0} item(s){lowNote}");
                 }
 #endif
             }
             catch { }
+            return result;
+        }
+
+        // Walks every inventory slot on every block and returns a per-slot breakdown of a specific
+        // item subtype. Used by !iml stockdump to diagnose phantom or unexpected stock counts.
+        // Slots inside production-block input inventories (index 0) are flagged as
+        // [SKIPPED by ScanAndQueue] — they are excluded from the auto-queue totals but still shown
+        // here so you can see if items are hiding there.
+        // Must be called from the game thread.
+        public List<string> StockDump(string subtype)
+        {
+            var result = new List<string>();
+            try
+            {
+#if TORCH
+                float grandTotal = 0f;
+                var lines = new List<(float amount, string line)>();
+                foreach (var tb in GetAllTerminalBlocks())
+                {
+                    try
+                    {
+                        string name = null;
+                        try { name = tb.CustomName; } catch { }
+                        bool isProd = tb is Sandbox.ModAPI.IMyProductionBlock;
+                        for (int i = 0; i < tb.InventoryCount; i++)
+                        {
+                            try
+                            {
+                                var inv = tb.GetInventory(i);
+                                if (inv == null) continue;
+                                var items = new List<VRage.Game.ModAPI.Ingame.MyInventoryItem>();
+                                inv.GetItems(items);
+                                foreach (var it in items)
+                                {
+                                    if (!string.Equals(it.Type.SubtypeId, subtype, StringComparison.OrdinalIgnoreCase)) continue;
+                                    float amt = (float)it.Amount;
+                                    grandTotal += amt;
+                                    string slotLabel = isProd ? (i == 0 ? "input[0]" : "output[1]") : $"inv[{i}]";
+                                    string skipped = (isProd && i == 0) ? " [SKIPPED by ScanAndQueue]" : "";
+                                    lines.Add((amt, $"  {amt,10:N0}  '{name}' (id:{tb.EntityId}) {slotLabel}{skipped}"));
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                }
+                lines.Sort((a, b) => b.amount.CompareTo(a.amount));
+                result.Add($"StockDump '{subtype}': {lines.Count} slot(s) found, grand total = {grandTotal:N0}");
+                foreach (var entry in lines)
+                    result.Add(entry.line);
+                if (lines.Count == 0)
+                    result.Add("  (not found in any inventory — item does not physically exist anywhere)");
+#endif
+            }
+            catch (Exception ex)
+            {
+                result.Add("ERROR: " + ex.Message);
+            }
             return result;
         }
 

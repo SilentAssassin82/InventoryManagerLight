@@ -44,6 +44,7 @@ namespace InventoryManagerLight
         // Optional container metadata captured on the game thread
         public string ContainerName;
         public string ContainerCustomData;
+        public float CurrentVolumeFraction; // 0.0–1.0, used by IML:FILL= limit checks in Planner
     }
 
     // A single transfer operation planned to run on the game thread

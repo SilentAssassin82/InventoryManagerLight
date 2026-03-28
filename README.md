@@ -134,6 +134,40 @@ Useful for:
 
 ---
 
+### Limit How Full a Container Gets
+
+```
+IML:COMPONENTS
+IML:FILL=75
+```
+
+Prevents IML from filling this container beyond N% of its volume capacity. If the container is already at or above the limit it is skipped as a destination — items will overflow to the next available container of the same category.
+
+Useful for:
+- Leaving headroom next to production blocks that also deposit into the same container
+- Keeping a buffer so incoming production output doesn't bounce
+
+> `IML:FILL=100` (the default) means no limit. Values are percentages — `IML:FILL=50` stops filling at half capacity.
+
+---
+
+### Fill Higher-Priority Containers First
+
+```
+IML:COMPONENTS
+IML:PRIORITY=10
+```
+
+When multiple containers share a category, higher-priority containers receive items first. Containers with the same priority receive items in arbitrary order. The default priority is `0`.
+
+Useful for:
+- Designating a "primary" storage box that fills before overflow boxes
+- Ensuring critical stockpiles top up before secondary reserves
+
+> Use any integer — `IML:PRIORITY=10` will fill before `IML:PRIORITY=5`, which fills before a container with no priority tag (`0`).
+
+---
+
 ## Assembler Auto-Queuing
 
 IML can automatically queue blueprints in assemblers to maintain minimum stock levels. Two modes work simultaneously — per-assembler CustomData takes priority, global config is the fallback.
@@ -408,6 +442,10 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.2.2
+- **`IML:FILL=N` tag:** Limits a container to N% of its volume capacity as a destination. When the container is at or above the limit, IML skips it and overflows to the next matching container. Useful for leaving headroom next to production blocks.
+- **`IML:PRIORITY=N` tag:** Higher-priority containers of a category receive items first during a sort pass. Default priority is `0`; higher integers fill sooner. Useful for designating primary storage before overflow boxes.
 
 ### v1.2.1
 - **`IML:LOCKED` tag:** Add `IML:LOCKED` to any tagged container to prevent IML from moving items into or out of it. The container remains visible in `!iml status` with a `[LOCKED]` annotation. Useful for personal stashes, containers being actively worked on, or temporarily pausing sorting without removing category tags.

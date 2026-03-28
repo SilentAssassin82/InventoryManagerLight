@@ -15,7 +15,9 @@ namespace InventoryManagerLight
             public string[] DenySubtypes;  // subtypes blocked from this container (e.g. "Uranium")
             public string[] AllowSubtypes; // if non-empty, only these subtypes are accepted
             public bool IsLocked;          // IML:LOCKED — skip as both source and destination
-        }
+            public float FillLimit;           // IML:FILL=75 → 0.75f; destination skipped when at/above this fraction
+            public int Priority;              // IML:PRIORITY=n; higher value fills first (default 0)
+            }
 
         // Parse a container tag supporting variants:
         //  - IML:INGOTS
@@ -152,7 +154,7 @@ namespace InventoryManagerLight
         // when searching for a container category tag.
         private static readonly string[] _directiveTokenPrefixes = new[]
         {
-            "MIN=", "DENY=", "ALLOW=", "NoDrain", "LCD", "SortNow", "LOCKED"
+            "MIN=", "DENY=", "ALLOW=", "NoDrain", "LCD", "SortNow", "LOCKED", "FILL=", "PRIORITY="
         };
 
         private static bool IsDirectiveToken(string token)
@@ -192,6 +194,18 @@ namespace InventoryManagerLight
                 else if (trimmed.Equals("IML:LOCKED", StringComparison.OrdinalIgnoreCase))
                 {
                     tag.IsLocked = true;
+                }
+                else if (trimmed.StartsWith("IML:FILL=", StringComparison.OrdinalIgnoreCase))
+                {
+                    float pct;
+                    if (float.TryParse(trimmed.Substring(9).Trim(), out pct))
+                        tag.FillLimit = Math.Max(0f, Math.Min(100f, pct)) / 100f;
+                }
+                else if (trimmed.StartsWith("IML:PRIORITY=", StringComparison.OrdinalIgnoreCase))
+                {
+                    int pri;
+                    if (int.TryParse(trimmed.Substring(13).Trim(), out pri))
+                        tag.Priority = pri;
                 }
             }
         }

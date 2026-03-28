@@ -492,6 +492,17 @@ namespace InventoryManagerLight
                         List<InventorySnapshot> snaps;
                         if (!groupSnaps.TryGetValue(groupKey, out snaps)) { snaps = new List<InventorySnapshot>(); groupSnaps[groupKey] = snaps; }
                         bool hasItems = false;
+                        float volFraction = 0f;
+                        try
+                        {
+                            var inv0 = tb.GetInventory(0);
+                            if (inv0 != null)
+                            {
+                                float maxVol = (float)inv0.MaxVolume;
+                                if (maxVol > 0f) volFraction = (float)inv0.CurrentVolume / maxVol;
+                            }
+                        }
+                        catch { }
                         for (int i = 0; i < tb.InventoryCount; i++)
                         {
                             try
@@ -505,7 +516,7 @@ namespace InventoryManagerLight
                                     try
                                     {
                                         var def = GetItemDefinitionId(it);
-                                        snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = def, Amount = (float)it.Amount, GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = name, ContainerCustomData = cd });
+                                        snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = def, Amount = (float)it.Amount, GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = name, ContainerCustomData = cd, CurrentVolumeFraction = volFraction });
                                         hasItems = true;
                                     }
                                     catch { }
@@ -515,7 +526,7 @@ namespace InventoryManagerLight
                         }
                         // sentinel entry for empty containers so Planner registers them as destinations
                         if (!hasItems)
-                            snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = default, Amount = 0, GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = name, ContainerCustomData = cd });
+                            snaps.Add(new InventorySnapshot { OwnerId = tb.EntityId, ItemDefinitionId = default, Amount = 0, GridId = tb.CubeGrid?.EntityId ?? 0L, ContainerName = name, ContainerCustomData = cd, CurrentVolumeFraction = volFraction });
                     }
                     catch { }
                 }

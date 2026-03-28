@@ -360,6 +360,9 @@ namespace InventoryManagerLight
             var containerContents = new Dictionary<long, Dictionary<MyDefinitionId, float>>();
             var containerDenySubtypes = new Dictionary<long, HashSet<string>>();
             var containerAllowSubtypes = new Dictionary<long, HashSet<string>>();
+            var containerFillLimit = new Dictionary<long, float>();
+            var containerCurrentFill = new Dictionary<long, float>();
+            var containerPriority = new Dictionary<long, int>();
 
             foreach (var s in snap)
             {
@@ -373,6 +376,14 @@ namespace InventoryManagerLight
                     containerDenySubtypes[s.OwnerId] = new HashSet<string>(tag.DenySubtypes, StringComparer.OrdinalIgnoreCase);
                 if (tag.AllowSubtypes != null && tag.AllowSubtypes.Length > 0)
                     containerAllowSubtypes[s.OwnerId] = new HashSet<string>(tag.AllowSubtypes, StringComparer.OrdinalIgnoreCase);
+                if (tag.FillLimit > 0f && tag.FillLimit < 1.0f)
+                    containerFillLimit[s.OwnerId] = tag.FillLimit;
+                if (tag.Priority != 0)
+                    containerPriority[s.OwnerId] = tag.Priority;
+                // track max fill fraction seen across all entries for this owner
+                float existingFill;
+                if (!containerCurrentFill.TryGetValue(s.OwnerId, out existingFill) || s.CurrentVolumeFraction > existingFill)
+                    containerCurrentFill[s.OwnerId] = s.CurrentVolumeFraction;
 
                 if (s.Amount <= 0) continue; // sentinel entry for empty containers
 
@@ -462,6 +473,13 @@ namespace InventoryManagerLight
                             HashSet<string> allowSet;
                             if (fits && containerAllowSubtypes.TryGetValue(other.Key, out allowSet) && !allowSet.Contains(subtype))
                                 fits = false;
+                            // IML:FILL= — skip destination if already at or above the fill limit
+                            if (fits)
+                            {
+                                float fillLimit; if (!containerFillLimit.TryGetValue(other.Key, out fillLimit)) fillLimit = 1.0f;
+                                float currentFill; containerCurrentFill.TryGetValue(other.Key, out currentFill);
+                                if (currentFill >= fillLimit) fits = false;
+                            }
                         }
                         if (fits) destIds.Add(other.Key);
                     }
@@ -486,6 +504,15 @@ namespace InventoryManagerLight
                             }
                         }
                     }
+
+                    // IML:PRIORITY= — fill higher-priority containers first
+                    if (destIds.Count > 1)
+                        destIds.Sort((a, b) =>
+                        {
+                            int pa; if (!containerPriority.TryGetValue(a, out pa)) pa = 0;
+                            int pb; if (!containerPriority.TryGetValue(b, out pb)) pb = 0;
+                            return pb.CompareTo(pa); // descending
+                        });
 
                     foreach (var destId in destIds)
                     {

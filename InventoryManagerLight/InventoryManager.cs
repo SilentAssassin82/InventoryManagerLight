@@ -245,6 +245,9 @@ namespace InventoryManagerLight
             }
 
             _applier.Tick();
+#if TORCH
+            _assemblerManager?.ApplyOnePendingAddition();
+#endif
         }
 
         // Walk all grids and collect every terminal block. Must be called from the game thread.
@@ -300,7 +303,7 @@ namespace InventoryManagerLight
         // Returns a stable key identifying the conveyor-connected group that contains the given grid.
         // Grids docked via connectors share the same key, so they are sorted together.
         // Falls back to the grid's own entity ID when GridGroups is unavailable.
-        private static long GetConveyorGroupKey(VRage.Game.ModAPI.IMyCubeGrid grid)
+        internal static long GetConveyorGroupKey(VRage.Game.ModAPI.IMyCubeGrid grid)
         {
             if (grid == null) return 0L;
             try

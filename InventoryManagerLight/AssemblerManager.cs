@@ -139,7 +139,7 @@ namespace InventoryManagerLight
             // inflate the stock count and falsely suppress queuing.
             // Production block INPUT inventories (index 0) are also excluded — materials already
             // pulled into an assembler/refinery input are committed to the current job.
-            var totals = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+            var totals = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             foreach (var tb in allBlocks)
             {
                 try
@@ -157,8 +157,8 @@ namespace InventoryManagerLight
                             foreach (var it in items)
                             {
                                 var sub = it.Type.SubtypeId;
-                                float prev; totals.TryGetValue(sub, out prev);
-                                totals[sub] = prev + (float)it.Amount;
+                                double prev; totals.TryGetValue(sub, out prev);
+                                totals[sub] = prev + (double)it.Amount;
                             }
                         }
                         catch { }
@@ -182,8 +182,8 @@ namespace InventoryManagerLight
                                 foreach (var it in items)
                                 {
                                     var sub = it.Type.SubtypeId;
-                                    float prev; totals.TryGetValue(sub, out prev);
-                                    totals[sub] = prev + (float)it.Amount;
+                                    double prev; totals.TryGetValue(sub, out prev);
+                                    totals[sub] = prev + (double)it.Amount;
                                 }
                             }
                             catch { }
@@ -204,7 +204,7 @@ namespace InventoryManagerLight
                 if (!customDataThresholds.TryGetValue(asm.EntityId, out thresholds)) continue;
 
                 // Read this assembler's own queue
-                var asmQueued = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+                var asmQueued = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 try
                 {
                     var queue = new List<Sandbox.ModAPI.Ingame.MyProductionItem>();
@@ -212,8 +212,8 @@ namespace InventoryManagerLight
                     foreach (var qi in queue)
                     {
                         var sub = qi.BlueprintId.SubtypeId.String;
-                        float prev; asmQueued.TryGetValue(sub, out prev);
-                        asmQueued[sub] = prev + (float)qi.Amount;
+                        double prev; asmQueued.TryGetValue(sub, out prev);
+                        asmQueued[sub] = prev + (double)qi.Amount;
                     }
                 }
                 catch { }
@@ -223,16 +223,17 @@ namespace InventoryManagerLight
                     claimedByCustomData.Add(kv.Key);
                     try
                     {
-                        float current; totals.TryGetValue(kv.Key, out current);
-                        float alreadyQueued; asmQueued.TryGetValue(kv.Key, out alreadyQueued);
-                        float projected = current + alreadyQueued;
+                        double current; totals.TryGetValue(kv.Key, out current);
+                        double alreadyQueued; asmQueued.TryGetValue(kv.Key, out alreadyQueued);
+                        double projected = current + alreadyQueued;
                         if (projected >= kv.Value)
                         {
                             diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — OK");
                             continue;
                         }
 
-                        float deficit = kv.Value - projected;
+                        // Ceiling prevents float-precision truncation causing off-by-one (e.g. 998.9999 → 999)
+                        int deficit = (int)Math.Ceiling(kv.Value - projected);
                         VRage.Game.MyDefinitionId blueprintId;
                         if (!VRage.Game.MyDefinitionId.TryParse("MyObjectBuilder_BlueprintDefinition", kv.Key, out blueprintId))
                         {
@@ -246,7 +247,7 @@ namespace InventoryManagerLight
                         diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — QUEUED {deficit:N0}");
 
                         // Keep local queue map consistent for this scan pass
-                        float q; asmQueued.TryGetValue(kv.Key, out q);
+                        double q; asmQueued.TryGetValue(kv.Key, out q);
                         asmQueued[kv.Key] = q + deficit;
                     }
                     catch (Exception ex)
@@ -262,7 +263,7 @@ namespace InventoryManagerLight
             if (!hasGlobalThresholds) return diag;
 
             // Sum queued amounts across all assemblers for global items
-            var globalQueued = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+            var globalQueued = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             foreach (var asm in assemblers)
             {
                 try
@@ -272,8 +273,8 @@ namespace InventoryManagerLight
                     foreach (var qi in queue)
                     {
                         var sub = qi.BlueprintId.SubtypeId.String;
-                        float prev; globalQueued.TryGetValue(sub, out prev);
-                        globalQueued[sub] = prev + (float)qi.Amount;
+                        double prev; globalQueued.TryGetValue(sub, out prev);
+                        globalQueued[sub] = prev + (double)qi.Amount;
                     }
                 }
                 catch { }
@@ -285,16 +286,17 @@ namespace InventoryManagerLight
                 if (claimedByCustomData.Contains(kv.Key)) { diag.Add($"    {kv.Key}: claimed by tagged assembler — skipped"); continue; }
                 try
                 {
-                    float current; totals.TryGetValue(kv.Key, out current);
-                    float alreadyQueued; globalQueued.TryGetValue(kv.Key, out alreadyQueued);
-                    float projected = current + alreadyQueued;
+                    double current; totals.TryGetValue(kv.Key, out current);
+                    double alreadyQueued; globalQueued.TryGetValue(kv.Key, out alreadyQueued);
+                    double projected = current + alreadyQueued;
                     if (projected >= kv.Value)
                     {
                         diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — OK");
                         continue;
                     }
 
-                    float deficit = kv.Value - projected;
+                    // Ceiling prevents float-precision truncation causing off-by-one
+                    int deficit = (int)Math.Ceiling(kv.Value - projected);
                     VRage.Game.MyDefinitionId blueprintId;
                     if (!VRage.Game.MyDefinitionId.TryParse("MyObjectBuilder_BlueprintDefinition", kv.Key, out blueprintId))
                     {
@@ -322,7 +324,7 @@ namespace InventoryManagerLight
                     _logger?.Info($"IML: Auto-queued {deficit:N0}x {kv.Key} in '{target.CustomName}' [GlobalConfig] (stock:{current:N0} queued:{alreadyQueued:N0} target:{kv.Value:N0})");
                     diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={kv.Value:N0} — QUEUED {deficit:N0} in '{target.CustomName}'");
 
-                    float q2; globalQueued.TryGetValue(kv.Key, out q2);
+                    double q2; globalQueued.TryGetValue(kv.Key, out q2);
                     globalQueued[kv.Key] = q2 + deficit;
                 }
                 catch (Exception ex)

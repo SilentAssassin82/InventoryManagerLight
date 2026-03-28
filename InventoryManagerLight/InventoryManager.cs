@@ -337,9 +337,10 @@ namespace InventoryManagerLight
         // find LCD panels tagged [IML:LCD] or [IML:LCD=CATEGORY], then write to each panel.
         private void UpdateLcdPanels()
         {
-            var catContainers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var catItems      = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var lcdPanels     = new List<(long entityId, string filter)>();
+            var catContainers    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var catItems         = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var catSubtypeTotals = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+            var lcdPanels        = new List<(long entityId, string filter)>();
 
             foreach (var tb in GetAllTerminalBlocks())
             {
@@ -363,6 +364,7 @@ namespace InventoryManagerLight
                     if (tag.Categories != null && tag.Categories.Length > 0)
                     {
                         int containerItems = 0;
+                        var containerSubtypes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                         for (int i = 0; i < tb.InventoryCount; i++)
                         {
                             try
@@ -372,7 +374,13 @@ namespace InventoryManagerLight
                                 var items = new List<VRage.Game.ModAPI.Ingame.MyInventoryItem>();
                                 inv.GetItems(items);
                                 foreach (var it in items)
-                                    containerItems += it.Amount.ToIntSafe();
+                                {
+                                    int amt = it.Amount.ToIntSafe();
+                                    containerItems += amt;
+                                    var sub = it.Type.SubtypeId;
+                                    int prevSub; containerSubtypes.TryGetValue(sub, out prevSub);
+                                    containerSubtypes[sub] = prevSub + amt;
+                                }
                             }
                             catch { }
                         }
@@ -381,6 +389,11 @@ namespace InventoryManagerLight
                             int prev;
                             catContainers.TryGetValue(cat, out prev); catContainers[cat] = prev + 1;
                             catItems.TryGetValue(cat, out prev);      catItems[cat]      = prev + containerItems;
+                            Dictionary<string, int> subtypeMap;
+                            if (!catSubtypeTotals.TryGetValue(cat, out subtypeMap))
+                            { subtypeMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); catSubtypeTotals[cat] = subtypeMap; }
+                            foreach (var kv in containerSubtypes)
+                            { int ps; subtypeMap.TryGetValue(kv.Key, out ps); subtypeMap[kv.Key] = ps + kv.Value; }
                         }
                     }
                 }
@@ -391,7 +404,7 @@ namespace InventoryManagerLight
             {
                 try
                 {
-                    var text = BuildLcdContent(catContainers, catItems, panel.filter);
+                    var text = BuildLcdContent(catContainers, catItems, catSubtypeTotals, panel.filter);
                     LcdManager.Instance.EnqueueUpdate(panel.entityId, text);
                 }
                 catch { }
@@ -425,7 +438,7 @@ namespace InventoryManagerLight
             return null;
         }
 
-        private string BuildLcdContent(Dictionary<string, int> catContainers, Dictionary<string, int> catItems, string filter)
+        private string BuildLcdContent(Dictionary<string, int> catContainers, Dictionary<string, int> catItems, Dictionary<string, Dictionary<string, int>> catSubtypeTotals, string filter)
         {
             var sb = new System.Text.StringBuilder();
             if (string.IsNullOrEmpty(filter))
@@ -444,12 +457,26 @@ namespace InventoryManagerLight
             else
             {
                 sb.AppendLine($"[IML: {filter}]");
-                int ctns = 0;  catContainers.TryGetValue(filter, out ctns);
-                int total = 0; catItems.TryGetValue(filter, out total);
-                int threshold;
-                bool isLow = _config.MinStockThresholds.TryGetValue(filter, out threshold) && total < threshold;
-                sb.AppendLine($" {ctns} container(s)");
-                sb.Append($" {total:N0} items{(isLow ? $" [! LOW — min {threshold:N0}]" : "")}");
+                Dictionary<string, int> subtypeMap;
+                catSubtypeTotals.TryGetValue(filter, out subtypeMap);
+                if (subtypeMap != null && subtypeMap.Count > 0)
+                {
+                    var sorted = new List<KeyValuePair<string, int>>(subtypeMap);
+                    sorted.Sort((a, b) => b.Value.CompareTo(a.Value));
+                    foreach (var kv in sorted)
+                        sb.AppendLine($" {kv.Key,-16} {kv.Value,8:N0}");
+                    int total = 0; foreach (var kv in subtypeMap) total += kv.Value;
+                    int threshold;
+                    bool isLow = _config.MinStockThresholds.TryGetValue(filter, out threshold) && total < threshold;
+                    sb.AppendLine($" {new string('-', 25)}");
+                    sb.Append($" {"Total",-16} {total,8:N0}{(isLow ? " [!]" : "")}");
+                }
+                else
+                {
+                    int ctns = 0; catContainers.TryGetValue(filter, out ctns);
+                    sb.AppendLine($" {ctns} container(s)");
+                    sb.Append(" (empty)");
+                }
             }
             return sb.ToString().TrimEnd();
         }

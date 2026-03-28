@@ -450,6 +450,13 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 
 ## Changelog
 
+### v1.2.5
+- **Category LCD breakdown:** `IML:LCD=INGOTS` (and any other category filter) now lists each item subtype with its quantity, sorted by amount descending, with a total line at the bottom. Low-stock `[!]` alert still appears on the total.
+
+### v1.2.4
+- **Per-conveyor-group stock counts:** `IML:MIN=` thresholds are now evaluated independently per conveyor network. Two separate bases each maintain their own stock levels rather than sharing a combined total across the server.
+- **`!iml stockdump` improvements:** Items in disconnected or unmanaged grids are annotated with `[SEPARATE GRID]` and an "accessible to sorter" total is shown when the server-wide total differs from what IML can actually reach.
+
 ### v1.2.2
 - **`IML:FILL=N` tag:** Limits a container to N% of its volume capacity as a destination. When the container is at or above the limit, IML skips it and overflows to the next matching container. Useful for leaving headroom next to production blocks.
 - **`IML:PRIORITY=N` tag:** Higher-priority containers of a category receive items first during a sort pass. Default priority is `0`; higher integers fill sooner. Useful for designating primary storage before overflow boxes.

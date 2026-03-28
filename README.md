@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.2.0  
+> **Version:** 1.2.1  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -113,6 +113,24 @@ IML:NoDrain
 By default, IML will pull finished items out of production block output inventories (assembler output slot, refinery output slot) and route them to their category containers. Add `IML:NoDrain` to a production block to leave it alone.
 
 > IML **never** touches production input queues regardless of tags.
+
+---
+
+### Lock a Container
+
+```
+IML:COMPONENTS
+IML:LOCKED
+```
+
+Prevents IML from moving anything into or out of this container — it is skipped entirely as both a source and a destination. The container still shows in `!iml status` with a `[LOCKED]` annotation so you can see it exists, but its item counts are excluded from totals.
+
+Useful for:
+- Personal stashes you don't want touched
+- Containers being actively loaded/unloaded by players
+- Temporarily pausing sorting on a specific box without removing all its tags
+
+> Add `IML:LOCKED` alongside the category tag. A container with only `IML:LOCKED` and no category tag is already ignored by IML.
 
 ---
 
@@ -390,6 +408,9 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.2.1
+- **`IML:LOCKED` tag:** Add `IML:LOCKED` to any tagged container to prevent IML from moving items into or out of it. The container remains visible in `!iml status` with a `[LOCKED]` annotation. Useful for personal stashes, containers being actively worked on, or temporarily pausing sorting without removing category tags.
 
 ### v1.2.0
 - **Persistent config file:** IML now reads and writes `iml-config.xml` next to the plugin DLL on first run. All server-tunable settings (`AutoSortIntervalTicks`, `DrainProductionOutputs`, `AssemblerThresholds`, `MinStockThresholds`, etc.) are now editable without rebuilding.

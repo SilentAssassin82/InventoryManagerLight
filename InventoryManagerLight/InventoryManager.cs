@@ -486,6 +486,7 @@ namespace InventoryManagerLight
                         if (tb is Sandbox.ModAPI.IMyTextPanel) continue; // text panels have no inventory
                         var tag = ContainerMatcher.ParseContainerTag(name, cd, _config.ContainerTagPrefix);
                         if (tag.Categories == null || tag.Categories.Length == 0) continue;
+                        if (tag.IsLocked) continue; // IML:LOCKED — skip as both source and destination
                         count++;
                         var groupKey = GetConveyorGroupKey(tb.CubeGrid);
                         List<InventorySnapshot> snaps;
@@ -633,6 +634,7 @@ namespace InventoryManagerLight
 #if TORCH
                 var catContainers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var catItems     = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var catLocked    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var tb in GetAllTerminalBlocks())
                 {
@@ -645,18 +647,21 @@ namespace InventoryManagerLight
                         if (tag.Categories == null || tag.Categories.Length == 0) continue;
 
                         int containerItems = 0;
-                        for (int i = 0; i < tb.InventoryCount; i++)
+                        if (!tag.IsLocked)
                         {
-                            try
+                            for (int i = 0; i < tb.InventoryCount; i++)
                             {
-                                var inv = tb.GetInventory(i);
-                                if (inv == null) continue;
-                                var items = new List<VRage.Game.ModAPI.Ingame.MyInventoryItem>();
-                                inv.GetItems(items);
-                                foreach (var it in items)
-                                    containerItems += it.Amount.ToIntSafe();
+                                try
+                                {
+                                    var inv = tb.GetInventory(i);
+                                    if (inv == null) continue;
+                                    var items = new List<VRage.Game.ModAPI.Ingame.MyInventoryItem>();
+                                    inv.GetItems(items);
+                                    foreach (var it in items)
+                                        containerItems += it.Amount.ToIntSafe();
+                                }
+                                catch { }
                             }
-                            catch { }
                         }
 
                         foreach (var cat in tag.Categories)
@@ -666,6 +671,11 @@ namespace InventoryManagerLight
                             catContainers[cat] = prev + 1;
                             catItems.TryGetValue(cat, out prev);
                             catItems[cat] = prev + containerItems;
+                            if (tag.IsLocked)
+                            {
+                                catLocked.TryGetValue(cat, out prev);
+                                catLocked[cat] = prev + 1;
+                            }
                         }
                     }
                     catch { }
@@ -677,11 +687,14 @@ namespace InventoryManagerLight
                     int containers = catContainers[cat];
                     int items = 0;
                     catItems.TryGetValue(cat, out items);
+                    int locked = 0;
+                    catLocked.TryGetValue(cat, out locked);
                     var cLabel = containers == 1 ? "container" : "containers";
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && items < threshold;
-                    var lowNote = isLow ? $"  [LOW — min {threshold:N0}]" : "";
-                    result.Add($"{cat,-12} {containers,2} {cLabel}, {items,9:N0} item(s){lowNote}");
+                    var lowNote    = isLow   ? $"  [LOW — min {threshold:N0}]" : "";
+                    var lockedNote = locked > 0 ? $"  [{locked} LOCKED]" : "";
+                    result.Add($"{cat,-12} {containers,2} {cLabel}, {items,9:N0} item(s){lowNote}{lockedNote}");
                 }
 #endif
             }

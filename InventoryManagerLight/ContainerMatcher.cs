@@ -14,6 +14,7 @@ namespace InventoryManagerLight
             public string Group; // optional group name or subgroup token
             public string[] DenySubtypes;  // subtypes blocked from this container (e.g. "Uranium")
             public string[] AllowSubtypes; // if non-empty, only these subtypes are accepted
+            public bool IsLocked;          // IML:LOCKED — skip as both source and destination
         }
 
         // Parse a container tag supporting variants:
@@ -86,7 +87,7 @@ namespace InventoryManagerLight
                     var tokenAfterPrefix = trimmedCd.Substring(prefIdx + prefix.Length);
                     if (IsDirectiveToken(tokenAfterPrefix.Trim())) continue;
                     var r = proc(tokenAfterPrefix);
-                    ScanFilters(customData, ref r);
+                    ScanFilters(customData, name, ref r);
                     return r;
                 }
             }
@@ -99,7 +100,7 @@ namespace InventoryManagerLight
                 {
                     var token = name.Substring(idx2 + prefix.Length);
                     var r = proc(token);
-                    if (!string.IsNullOrWhiteSpace(customData)) ScanFilters(customData, ref r);
+                    ScanFilters(customData, name, ref r);
                     return r;
                 }
             }
@@ -151,7 +152,7 @@ namespace InventoryManagerLight
         // when searching for a container category tag.
         private static readonly string[] _directiveTokenPrefixes = new[]
         {
-            "MIN=", "DENY=", "ALLOW=", "NoDrain", "LCD", "SortNow"
+            "MIN=", "DENY=", "ALLOW=", "NoDrain", "LCD", "SortNow", "LOCKED"
         };
 
         private static bool IsDirectiveToken(string token)
@@ -165,9 +166,14 @@ namespace InventoryManagerLight
             return false;
         }
 
-        // Scan all lines of customData for IML:DENY= and IML:ALLOW= tokens.
-        private static void ScanFilters(string customData, ref ContainerTagInfo tag)
+        // Scan all lines of customData (and the block name) for IML:DENY=, IML:ALLOW=, and IML:LOCKED.
+        private static void ScanFilters(string customData, string name, ref ContainerTagInfo tag)
         {
+            // check name for LOCKED
+            if (!string.IsNullOrEmpty(name) && name.IndexOf("IML:LOCKED", StringComparison.OrdinalIgnoreCase) >= 0)
+                tag.IsLocked = true;
+
+            if (string.IsNullOrEmpty(customData)) return;
             foreach (var line in customData.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 var trimmed = line.Trim();
@@ -182,6 +188,10 @@ namespace InventoryManagerLight
                     tag.AllowSubtypes = trimmed.Substring(10)
                         .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
                         .Select(v => v.Trim()).Where(v => v.Length > 0).ToArray();
+                }
+                else if (trimmed.Equals("IML:LOCKED", StringComparison.OrdinalIgnoreCase))
+                {
+                    tag.IsLocked = true;
                 }
             }
         }

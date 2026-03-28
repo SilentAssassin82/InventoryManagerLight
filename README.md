@@ -259,6 +259,13 @@ Keys are **SubtypeId** values as they appear in Space Engineers (case-insensitiv
 | Power Cell | `PowerCell` |
 | Solar Cell | `SolarCell` |
 | Superconductor | `SuperConductor` |
+| Medical Kit | `Medkit` |
+| Gatling Ammo Box | `NATO_25x184mm` |
+| Autocannon Magazine | `AutocannonClip` |
+| Assault Cannon Shell | `MediumCalibreAmmo` |
+| Artillery Shell (250mm) | `LargeCalibreAmmo` |
+| Small Railgun Sabot | `SmallRailgunAmmo` |
+| Large Railgun Sabot | `LargeRailgunAmmo` |
 
 If a subtype name is wrong, IML will log a debug message: `IML: AssemblerManager: no blueprint for 'XYZ'` — check the Torch log and correct the spelling.
 

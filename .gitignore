@@ -27,6 +27,9 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
+# Release artifacts
+*.zip
+
 # Torch / SE specific — don't commit game binaries or local SE references
 *.dll
 !InventoryManagerLight/bin/Release/InventoryManagerLight.dll

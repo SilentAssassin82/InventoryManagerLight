@@ -180,12 +180,13 @@ config.AssemblerThresholds["MotorComponent"] = 200;
 
 ### Subtype Names
 
-Keys are **SubtypeId** values as they appear in Space Engineers (case-insensitive). Common examples:
+Keys are **SubtypeId** values as they appear in Space Engineers (case-insensitive). These reflect post-Economy-update vanilla SE — use `!iml stockdump <name>` to verify the exact SubtypeId on your server if unsure.
 
 | Item | SubtypeId |
 |------|-----------|
 | Steel Plate | `SteelPlate` |
-| Motor | `MotorComponent` |
+| Motor | `Motor` |
+| Medical Component | `Medical` |
 | Construction Comp. | `Construction` |
 | Small Steel Tube | `SmallTube` |
 | Large Steel Tube | `LargeTube` |
@@ -353,7 +354,7 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ## Changelog
 
 ### v1.1.2
-- **Blueprint subtype fix:** IML now uses `MyDefinitionManager` to resolve the correct blueprint for each item at runtime. Mods that rename vanilla components (e.g. `MotorComponent` → `Motor`, `MedicalComponent` → `Medical`) while keeping the original blueprint SubtypeId will now queue and track correctly. No config changes needed.
+- **Blueprint subtype fix:** Space Engineers' Economy update renamed several vanilla components (e.g. the item SubtypeId `MotorComponent` became `Motor`, `MedicalComponent` became `Medical`) while the blueprint SubtypeIds were left unchanged. IML now uses `MyDefinitionManager` to resolve the correct blueprint for each item at runtime, so queuing and queue-readback work correctly regardless of which SE version or update level the server is running. No config changes needed.
 
 ### v1.1.1
 - **DC fix:** assembler `AddQueueItem` calls are now spread one-per-tick (deferred queue) instead of firing all at once, eliminating client disconnects when the K menu is open during a scan.

@@ -105,6 +105,7 @@
   <ItemGroup>
     <Compile Include="AssemblerManager.cs" />
     <Compile Include="CategoryResolver.cs" />
+    <Compile Include="ConfigManager.cs" />
     <Compile Include="ConsumerScanner.cs" />
     <Compile Include="ContainerMatcher.cs" />
     <Compile Include="ConveyorScanner.cs" />

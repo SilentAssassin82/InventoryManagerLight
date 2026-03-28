@@ -725,15 +725,51 @@ namespace InventoryManagerLight
             try
             {
 #if TORCH
+                var allBlocks = GetAllTerminalBlocks();
+
+                // Determine which conveyor groups contain at least one IML-managed container.
+                // Slots outside these groups are invisible to the sorter and assembler manager.
+                var gcKeyCache = new Dictionary<long, long>();
+                var managedGroupKeys = new HashSet<long>();
+                foreach (var tb2 in allBlocks)
+                {
+                    try
+                    {
+                        string n2 = null, cd2 = null;
+                        try { n2 = tb2.CustomName; } catch { }
+                        try { cd2 = tb2.CustomData; } catch { }
+                        var t2 = ContainerMatcher.ParseContainerTag(n2, cd2, _config.ContainerTagPrefix);
+                        if (t2.Categories == null || t2.Categories.Length == 0) continue;
+                        var g2 = tb2.CubeGrid as VRage.Game.ModAPI.IMyCubeGrid;
+                        if (g2 == null) continue;
+                        long gk;
+                        if (!gcKeyCache.TryGetValue(g2.EntityId, out gk))
+                        { gk = GetConveyorGroupKey(g2); gcKeyCache[g2.EntityId] = gk; }
+                        managedGroupKeys.Add(gk);
+                    }
+                    catch { }
+                }
+
                 float grandTotal = 0f;
+                float accessibleTotal = 0f;
                 var lines = new List<(float amount, string line)>();
-                foreach (var tb in GetAllTerminalBlocks())
+                foreach (var tb in allBlocks)
                 {
                     try
                     {
                         string name = null;
                         try { name = tb.CustomName; } catch { }
                         bool isProd = tb is Sandbox.ModAPI.IMyProductionBlock;
+
+                        long blockGk = 0;
+                        var blockGrid = tb.CubeGrid as VRage.Game.ModAPI.IMyCubeGrid;
+                        if (blockGrid != null)
+                        {
+                            if (!gcKeyCache.TryGetValue(blockGrid.EntityId, out blockGk))
+                            { blockGk = GetConveyorGroupKey(blockGrid); gcKeyCache[blockGrid.EntityId] = blockGk; }
+                        }
+                        bool inManagedGroup = managedGroupKeys.Contains(blockGk);
+
                         for (int i = 0; i < tb.InventoryCount; i++)
                         {
                             try
@@ -747,9 +783,11 @@ namespace InventoryManagerLight
                                     if (!string.Equals(it.Type.SubtypeId, subtype, StringComparison.OrdinalIgnoreCase)) continue;
                                     float amt = (float)it.Amount;
                                     grandTotal += amt;
+                                    if (inManagedGroup) accessibleTotal += amt;
                                     string slotLabel = isProd ? (i == 0 ? "input[0]" : "output[1]") : $"inv[{i}]";
                                     string skipped = (isProd && i == 0) ? " [SKIPPED by ScanAndQueue]" : "";
-                                    lines.Add((amt, $"  {amt,10:N0}  '{name}' (id:{tb.EntityId}) {slotLabel}{skipped}"));
+                                    string groupNote = inManagedGroup ? "" : " [SEPARATE GRID]";
+                                    lines.Add((amt, $"  {amt,10:N0}  '{name}' (id:{tb.EntityId}) {slotLabel}{skipped}{groupNote}"));
                                 }
                             }
                             catch { }
@@ -758,7 +796,8 @@ namespace InventoryManagerLight
                     catch { }
                 }
                 lines.Sort((a, b) => b.amount.CompareTo(a.amount));
-                result.Add($"StockDump '{subtype}': {lines.Count} slot(s) found, grand total = {grandTotal:N0}");
+                string accessNote = accessibleTotal < grandTotal ? $", accessible to sorter: {accessibleTotal:N0}" : "";
+                result.Add($"StockDump '{subtype}': {lines.Count} slot(s) found, grand total = {grandTotal:N0}{accessNote}");
                 foreach (var entry in lines)
                     result.Add(entry.line);
                 if (lines.Count == 0)

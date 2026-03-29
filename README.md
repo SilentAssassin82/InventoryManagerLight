@@ -425,6 +425,8 @@ Available settings:
 | `MaxSortMs` | `100` | Max milliseconds for block enumeration during a sort pass |
 | `AssemblerThresholds` | *(empty)* | Global per-subtype minimum stock for assembler auto-queuing (fallback when no `IML:MIN=` tag claims the item) |
 | `MinStockThresholds` | *(empty)* | Per-category low-stock alert thresholds for LCD panels and `!iml status` |
+| `QueueApplyDelayTicks` | `300` | Ticks to wait after an assembler scan before applying queue additions (~5 sec). Prevents K-menu client disconnects. Set to `0` for immediate apply |
+| `CustomCategories` | *(empty)* | Admin-defined categories for modded items — see [Custom Categories](#custom-categories-mod-support) below |
 
 ### Setting AssemblerThresholds in the config file
 
@@ -440,6 +442,53 @@ Add one `<Item>` per subtype inside `<AssemblerThresholds>`:
 ```
 
 Then run `!iml reload`. Per-assembler `IML:MIN=` tags in CustomData always take priority over these global fallbacks.
+
+---
+
+### Setting MinStockThresholds in the config file
+
+Add one `<Item>` per category inside `<MinStockThresholds>`:
+
+```xml
+<ImlConfig>
+  <MinStockThresholds>
+    <Item key="INGOTS" value="5000" />
+    <Item key="COMPONENTS" value="2000" />
+    <Item key="AMMO" value="1000" />
+  </MinStockThresholds>
+</ImlConfig>
+```
+
+Then run `!iml reload`. When a category's total item count drops below its threshold, `!iml status` flags it with `[!]` and LCD panels show the progress bar in a low-stock state.
+
+---
+
+## Custom Categories (Mod Support)
+
+IML supports admin-defined categories for modded items. Define them in the `<CustomCategories>` section of `iml-config.xml` — each category maps to a list of **exact SubtypeId strings**. Once defined, containers are tagged exactly like built-in categories (`IML:MYCATEGORY`), and custom categories work in all LCD modes (`IML:LCD=MYCATEGORY`).
+
+```xml
+<ImlConfig>
+  <CustomCategories>
+    <Category name="ADVANCEDPARTS">
+      <Subtype>AdvancedSteelPlate</Subtype>
+      <Subtype>HeavyArmorPlate</Subtype>
+    </Category>
+    <Category name="MODAMMO">
+      <Subtype>LargeModRound</Subtype>
+      <Subtype>SmallModRound</Subtype>
+    </Category>
+  </CustomCategories>
+</ImlConfig>
+```
+
+Then run `!iml reload`. Tag containers with `IML:ADVANCEDPARTS` or `IML:MODAMMO` exactly as you would a built-in category.
+
+**Finding modded SubtypeIds:**
+
+Use `!iml refreshdefs` — it scans all loaded game definitions and logs every item subtype not already covered by a built-in category, making it easy to identify the exact SubtypeId strings to use.
+
+> Custom category names are case-insensitive. `IML:ADVANCEDPARTS`, `IML:AdvancedParts`, and `IML:advancedparts` all match the same category. DENY/ALLOW and all other container tags work on custom categories exactly as they do on built-in ones.
 
 ---
 

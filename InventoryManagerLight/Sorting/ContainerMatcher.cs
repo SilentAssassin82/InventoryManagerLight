@@ -89,7 +89,7 @@ namespace InventoryManagerLight
                     var tokenAfterPrefix = trimmedCd.Substring(prefIdx + prefix.Length);
                     if (IsDirectiveToken(tokenAfterPrefix.Trim())) continue;
                     var r = proc(tokenAfterPrefix);
-                    ScanFilters(customData, name, ref r);
+                    ScanFilters(customData, name, ref r, prefix);
                     return r;
                 }
             }
@@ -102,7 +102,7 @@ namespace InventoryManagerLight
                 {
                     var token = name.Substring(idx2 + prefix.Length);
                     var r = proc(token);
-                    ScanFilters(customData, name, ref r);
+                    ScanFilters(customData, name, ref r, prefix);
                     return r;
                 }
             }
@@ -168,43 +168,49 @@ namespace InventoryManagerLight
             return false;
         }
 
-        // Scan all lines of customData (and the block name) for IML:DENY=, IML:ALLOW=, and IML:LOCKED.
-        private static void ScanFilters(string customData, string name, ref ContainerTagInfo tag)
+        // Scan all lines of customData (and the block name) for DENY=, ALLOW=, LOCKED, FILL=, PRIORITY=.
+        private static void ScanFilters(string customData, string name, ref ContainerTagInfo tag, string prefix)
         {
+            var lockedKey   = prefix + "LOCKED";
+            var denyKey     = prefix + "DENY=";
+            var allowKey    = prefix + "ALLOW=";
+            var fillKey     = prefix + "FILL=";
+            var priorityKey = prefix + "PRIORITY=";
+
             // check name for LOCKED
-            if (!string.IsNullOrEmpty(name) && name.IndexOf("IML:LOCKED", StringComparison.OrdinalIgnoreCase) >= 0)
+            if (!string.IsNullOrEmpty(name) && name.IndexOf(lockedKey, StringComparison.OrdinalIgnoreCase) >= 0)
                 tag.IsLocked = true;
 
             if (string.IsNullOrEmpty(customData)) return;
             foreach (var line in customData.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 var trimmed = line.Trim();
-                if (trimmed.StartsWith("IML:DENY=", StringComparison.OrdinalIgnoreCase))
+                if (trimmed.StartsWith(denyKey, StringComparison.OrdinalIgnoreCase))
                 {
-                    tag.DenySubtypes = trimmed.Substring(9)
+                    tag.DenySubtypes = trimmed.Substring(denyKey.Length)
                         .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
                         .Select(v => v.Trim()).Where(v => v.Length > 0).ToArray();
                 }
-                else if (trimmed.StartsWith("IML:ALLOW=", StringComparison.OrdinalIgnoreCase))
+                else if (trimmed.StartsWith(allowKey, StringComparison.OrdinalIgnoreCase))
                 {
-                    tag.AllowSubtypes = trimmed.Substring(10)
+                    tag.AllowSubtypes = trimmed.Substring(allowKey.Length)
                         .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
                         .Select(v => v.Trim()).Where(v => v.Length > 0).ToArray();
                 }
-                else if (trimmed.Equals("IML:LOCKED", StringComparison.OrdinalIgnoreCase))
+                else if (trimmed.Equals(lockedKey, StringComparison.OrdinalIgnoreCase))
                 {
                     tag.IsLocked = true;
                 }
-                else if (trimmed.StartsWith("IML:FILL=", StringComparison.OrdinalIgnoreCase))
+                else if (trimmed.StartsWith(fillKey, StringComparison.OrdinalIgnoreCase))
                 {
                     float pct;
-                    if (float.TryParse(trimmed.Substring(9).Trim(), out pct))
+                    if (float.TryParse(trimmed.Substring(fillKey.Length).Trim(), out pct))
                         tag.FillLimit = Math.Max(0f, Math.Min(100f, pct)) / 100f;
                 }
-                else if (trimmed.StartsWith("IML:PRIORITY=", StringComparison.OrdinalIgnoreCase))
+                else if (trimmed.StartsWith(priorityKey, StringComparison.OrdinalIgnoreCase))
                 {
                     int pri;
-                    if (int.TryParse(trimmed.Substring(13).Trim(), out pri))
+                    if (int.TryParse(trimmed.Substring(priorityKey.Length).Trim(), out pri))
                         tag.Priority = pri;
                 }
             }

@@ -240,10 +240,7 @@ namespace InventoryManagerLight
             try
             {
                 if (_sortAction != null)
-                {
                     actions.Add(_sortAction);
-                    try { new NLogLogger().Debug($"IML: OnCustomActionGetter fired for block {block.EntityId} (def={block.BlockDefinition}), action injected"); } catch { }
-                }
             }
             catch { }
         }

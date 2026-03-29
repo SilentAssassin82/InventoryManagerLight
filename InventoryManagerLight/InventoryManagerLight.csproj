@@ -103,7 +103,13 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AssemblerManager.cs" />
     <Compile Include="Assembler\AssemblerManager.cs" />
+    <Compile Include="CategoryResolver.cs" />
+    <Compile Include="ConfigManager.cs" />
+    <Compile Include="InventoryManager.cs" />
+    <Compile Include="LcdManager.cs" />
+    <Compile Include="RuntimeConfig.cs" />
     <Compile Include="Sorting\CategoryResolver.cs" />
     <Compile Include="Config\ConfigManager.cs" />
     <Compile Include="Scanning\ConsumerScanner.cs" />

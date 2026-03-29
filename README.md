@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.2.9  
+> **Version:** 1.3.0  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -645,6 +645,12 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.3.0
+- **`OnCustomActionGetter` allocation fix:** Removed a debug log call that allocated a new logger object and string-interpolated a block ID on every terminal action list request. This handler fires server-side whenever any client opens a terminal screen, so on an active server it could run thousands of times per minute with no benefit.
+- **`ScanFilters` prefix fix:** All five filter directives (`DENY=`, `ALLOW=`, `LOCKED`, `FILL=`, `PRIORITY=`) previously hardcoded `"IML:"` as the tag prefix with fixed substring offsets. They now correctly use the configured `ContainerTagPrefix` — previously they would silently break if the prefix was ever changed.
+- **Config fix:** `ConfigManager` was not persisting or loading `QueueApplyDelayTicks`, `SortScanIntervalTicks`, or `RequireContainerGroupMatch` to/from `iml-config.xml`. These three settings were effectively read-only at their default values regardless of what was in the config file.
+- **README:** Documented four previously undocumented features: multi-category syntax (`IML:INGOTS,COMPONENTS`), block-name tagging, Container Groups (`:Label` suffix), and In-Game Sort Triggers (terminal action + `IML:SortNow=1` CustomData flag).
 
 ### v1.2.9
 - **Ingredient resource-check before queuing:** Before adding items to an assembler queue, IML now checks whether the conveyor network has enough ingredients to craft the requested amount. If materials are partially available, IML queues only as many as the ingredients support (**partial fill**); if none are available at all, the queue addition is skipped for this pass. Both outcomes are reported in `!iml queueall` output (`PARTIAL — capped at X/Y` or `BLOCKED — ingredients unavailable`).

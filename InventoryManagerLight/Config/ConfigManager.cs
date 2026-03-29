@@ -80,6 +80,9 @@ namespace InventoryManagerLight
                 TransfersPerTick            = c.TransfersPerTick,
                 MsBudgetPerTick             = c.MsBudgetPerTick,
                 MaxSortMs                   = c.MaxSortMs,
+                QueueApplyDelayTicks        = c.QueueApplyDelayTicks,
+                SortScanIntervalTicks       = c.SortScanIntervalTicks,
+                RequireContainerGroupMatch  = c.RequireContainerGroupMatch,
             };
             foreach (var kv in c.AssemblerThresholds)
                 d.AssemblerThresholds.Add(new ImlConfigEntry { Key = kv.Key, Value = kv.Value });
@@ -100,6 +103,9 @@ namespace InventoryManagerLight
             c.TransfersPerTick           = d.TransfersPerTick;
             c.MsBudgetPerTick            = d.MsBudgetPerTick;
             c.MaxSortMs                  = d.MaxSortMs;
+            c.QueueApplyDelayTicks       = d.QueueApplyDelayTicks;
+            c.SortScanIntervalTicks      = d.SortScanIntervalTicks;
+            c.RequireContainerGroupMatch = d.RequireContainerGroupMatch;
 
             c.AssemblerThresholds.Clear();
             foreach (var e in d.AssemblerThresholds)
@@ -150,7 +156,17 @@ namespace InventoryManagerLight
         // Max milliseconds for block enumeration during a sort pass. Default: 100.
         public int MaxSortMs { get; set; } = 100;
 
-        // Global minimum stock targets for assembler auto-queuing (fallback when no IML:MIN= tag claims the item).
+        // Ticks to wait after an assembler scan before applying queue additions. Default: 300 (~5 sec).
+        public int QueueApplyDelayTicks { get; set; } = 300;
+
+        // Ticks between IML:SortNow=1 flag polls. Default: 600 (~10 sec). Set to 0 to disable.
+        public int SortScanIntervalTicks { get; set; } = 600;
+
+        // If true, items never cross container-group boundaries. Default: false.
+        // When false, same-group containers are preferred but items may fall back to other groups.
+        public bool RequireContainerGroupMatch { get; set; } = false;
+
+        // Global minimum stock targets
         // Example: <Item key="SteelPlate" value="500" />
         [XmlArray("AssemblerThresholds")]
         [XmlArrayItem("Item")]

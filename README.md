@@ -44,7 +44,13 @@ Every **AutoSortIntervalTicks** (default: 6 000 game ticks ≈ 2 minutes), IML:
 
 ## Container Tags (CustomData)
 
-Tags go in a block's **CustomData** field (one per line, case-insensitive for the tag name).
+Tags go in a block's **CustomData** field (one per line, case-insensitive for the tag name). Alternatively, the primary category tag can be embedded directly in the **block name**:
+
+```
+Large Cargo Container [IML:INGOTS]
+```
+
+CustomData is the recommended location — modifier tags (`IML:DENY=`, `IML:ALLOW=`, `IML:FILL=`, `IML:PRIORITY=`) are always read from CustomData, so the block name can only usefully carry the category tag itself.
 
 ### Assign a Category
 
@@ -60,7 +66,15 @@ IML:WEAPONS
 IML:MISC
 ```
 
-Tells IML this container should receive (and hold) items of that category. A container can have **only one primary category tag**.
+Tells IML this container should receive (and hold) items of that category.
+
+Multiple categories can be combined on a single line, comma-separated:
+
+```
+IML:INGOTS,COMPONENTS
+```
+
+A container tagged with multiple categories acts as a shared store for all of them — useful on small ships where a single cargo box needs to hold several item types.
 
 | Tag | What goes in it |
 |-----|----------------|
@@ -165,6 +179,32 @@ Useful for:
 - Ensuring critical stockpiles top up before secondary reserves
 
 > Use any integer — `IML:PRIORITY=10` will fill before `IML:PRIORITY=5`, which fills before a container with no priority tag (`0`).
+
+---
+
+### Container Groups
+
+Append a group label to the category tag to create isolated sorting pools within a single conveyor network:
+
+```
+IML:INGOTS:MedBay
+IML:COMPONENTS:MedBay
+```
+
+All containers sharing the `:MedBay` label form one independent sort pool. Containers with a different label — or no label — form separate pools. Items flow preferentially between containers in the same group; if a group has a surplus that can't be absorbed internally, items will spill to other containers of the same category.
+
+**Syntax variants — all equivalent:**
+```
+IML:INGOTS:Bay1
+IML:Bay1:INGOTS
+```
+
+Useful for:
+- Ships with distinct functional areas (medical bay, engineering deck, bridge) on the same conveyor network
+- Sub-stations that should maintain their own stock independently of the main base
+- Any scenario where you want soft isolation without physically disconnecting conveyors
+
+> The group label is short and arbitrary — `Bay1`, `Med`, `Eng`, `A`, `B` all work. Labels are case-insensitive.
 
 ---
 
@@ -403,6 +443,32 @@ When grids connect (docking, merge blocks, rotor/hinge attachment with conveyor 
 
 ---
 
+## In-Game Sort Triggers
+
+Two ways to trigger an immediate sort from inside the game without using the Torch console:
+
+### Terminal Action — "IML: Sort Now"
+
+Every terminal block gains an **IML: Sort Now** action visible in the block's **Setup Actions** picker. Assign it to a button panel, cockpit toolbar, or timer block for hands-free in-game sorting.
+
+- Triggers a full sort across the entire conveyor network (same as `!iml sortall`)
+- 5-second per-block cooldown to prevent spam
+- Works from any terminal block — cargo containers, assemblers, anything
+
+### CustomData Flag — `IML:SortNow=1`
+
+Write `IML:SortNow=1` to any block's CustomData to request a sort:
+
+```
+IML:SortNow=1
+```
+
+IML polls for this flag every ~10 seconds, triggers a full sort pass, then automatically clears the flag. Useful when an in-game script or programmable block needs to request a sort by writing to CustomData.
+
+> Both triggers run the same full sort pass as `!iml sortall`. Neither is limited to a single grid or container.
+
+---
+
 ## Configuration
 
 IML stores its settings in **`iml-config.xml`**, created automatically next to `InventoryManagerLight.dll` on first run. Edit the file and run `!iml reload` to apply changes without restarting the server.
@@ -426,6 +492,8 @@ Available settings:
 | `AssemblerThresholds` | *(empty)* | Global per-subtype minimum stock for assembler auto-queuing (fallback when no `IML:MIN=` tag claims the item) |
 | `MinStockThresholds` | *(empty)* | Per-category low-stock alert thresholds for LCD panels and `!iml status` |
 | `QueueApplyDelayTicks` | `300` | Ticks to wait after an assembler scan before applying queue additions (~5 sec). Prevents K-menu client disconnects. Set to `0` for immediate apply |
+| `SortScanIntervalTicks` | `600` | Ticks between `IML:SortNow=1` flag polls (~10 sec at 60 UPS). Set to `0` to disable the SortNow polling entirely |
+| `RequireContainerGroupMatch` | `false` | If `true`, items never cross container-group boundaries — strict group isolation. If `false` (default), same-group containers are preferred but IML will use other groups as a fallback when no matching container exists in the group |
 | `CustomCategories` | *(empty)* | Admin-defined categories for modded items — see [Custom Categories](#custom-categories-mod-support) below |
 
 ### Setting AssemblerThresholds in the config file

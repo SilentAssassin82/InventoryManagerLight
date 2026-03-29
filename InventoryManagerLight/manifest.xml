@@ -2,7 +2,7 @@
 <PluginManifest>
   <Name>InventoryManagerLight</Name>
   <Guid>50bc17bd-b3d6-4da8-b332-c62e569f909c</Guid>
-  <Version>1.2.5</Version>
+  <Version>1.2.6</Version>
   <Description>Automatically sorts and distributes items across containers off the game thread. Tag-based configuration via CustomData. Assembler auto-queuing with IML:MIN= tags.</Description>
   <Author>Chris</Author>
   <Repository>https://github.com/SilentAssassin82/InventoryManagerLight</Repository>

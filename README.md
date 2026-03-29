@@ -450,6 +450,11 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 
 ## Changelog
 
+### v1.2.6
+- **K-menu crash fix (`!iml queueall`):** `TriggerAssemblerScan` now respects the `MaxSortMs` time budget — if block enumeration takes too long under server load the scan is aborted and a warning is printed rather than stalling the game thread.
+- **Queue apply grace period:** After any assembler scan (periodic or manual), IML now waits `QueueApplyDelayTicks` ticks (default: 300 ≈ 5 seconds) before firing the first `AddQueueItem` call. This gives players time to close the assembler K-menu before queue-change replication packets arrive, preventing client disconnects.
+- `QueueApplyDelayTicks` is configurable in `iml-config.xml`. Set to `0` to restore the previous immediate-apply behaviour.
+
 ### v1.2.5
 - **Category LCD breakdown:** `IML:LCD=INGOTS` (and any other category filter) now lists each item subtype with its quantity, sorted by amount descending, with a total line at the bottom. Low-stock `[!]` alert still appears on the total.
 

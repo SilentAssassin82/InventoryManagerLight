@@ -106,6 +106,12 @@ namespace InventoryManagerLight
         // Default: 3600 (~60 seconds). Set to 0 to disable.
         public int AssemblerScanIntervalTicks { get; set; } = 3600;
 
+        // Grace period in game ticks between a ScanAndQueue completing and the first
+        // AddQueueItem call being applied. Prevents K-menu DC when queue-change replication
+        // packets land while a client has the assembler terminal open.
+        // Default: 300 (~5 seconds at 60 UPS). Set to 0 to restore immediate-apply behaviour.
+        public int QueueApplyDelayTicks { get; set; } = 300;
+
         // Demand decay factor applied each scan. Values multiplied by this factor (0..1). 0.5 halves demand each scan.
         public double DemandDecayFactor { get; set; } = 0.5;
 

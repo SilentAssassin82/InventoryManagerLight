@@ -32,6 +32,7 @@ namespace InventoryManagerLight
         private int _tickCounter;
         private int _totalSortPasses;
         private readonly AssemblerManager _assemblerManager;
+        private int _queueApplyGrace; // ticks remaining before AddQueueItem calls may fire
         // Sentinel category used to mark production block output snapshots as drain-only sources.
         // Not in CategoryMappings so ItemMatchesCategory always returns false — every item is misplaced.
         private const string DrainSentinelCategory = "__DRAIN__";
@@ -230,7 +231,10 @@ namespace InventoryManagerLight
                     if (asmSw.ElapsedMilliseconds > _config.MaxSortMs)
                         _logger?.Warn($"IML: AssemblerScan skipped — block enumeration took {asmSw.ElapsedMilliseconds}ms (budget: {_config.MaxSortMs}ms).");
                     else
+                    {
                         _assemblerManager.ScanAndQueue(asmBlocks);
+                        _queueApplyGrace = _config.QueueApplyDelayTicks;
+                    }
                 }
                 catch { }
 #endif
@@ -246,7 +250,10 @@ namespace InventoryManagerLight
 
             _applier.Tick();
 #if TORCH
-            _assemblerManager?.ApplyOnePendingAddition();
+            if (_queueApplyGrace > 0)
+                _queueApplyGrace--;
+            else
+                _assemblerManager?.ApplyOnePendingAddition();
 #endif
         }
 
@@ -618,9 +625,16 @@ namespace InventoryManagerLight
             try
             {
 #if TORCH
+                var sw = Stopwatch.StartNew();
                 var blocks = GetAllTerminalBlocks();
+                if (sw.ElapsedMilliseconds > _config.MaxSortMs)
+                {
+                    result.Add($"WARNING: block enumeration took {sw.ElapsedMilliseconds}ms (budget: {_config.MaxSortMs}ms) — scan aborted to protect frame time.");
+                    return result;
+                }
                 var lines = _assemblerManager.ScanAndQueue(blocks);
                 if (lines != null) result.AddRange(lines);
+                _queueApplyGrace = _config.QueueApplyDelayTicks;
 #endif
             }
             catch (Exception ex)

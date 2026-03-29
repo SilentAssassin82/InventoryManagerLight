@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Xml;
 using System.Xml.Serialization;
 
@@ -84,6 +85,8 @@ namespace InventoryManagerLight
                 d.AssemblerThresholds.Add(new ImlConfigEntry { Key = kv.Key, Value = kv.Value });
             foreach (var kv in c.MinStockThresholds)
                 d.MinStockThresholds.Add(new ImlConfigEntry { Key = kv.Key, Value = kv.Value });
+            foreach (var kv in c.CustomCategories)
+                d.CustomCategories.Add(new CustomCategoryData { Name = kv.Key, Subtypes = new List<string>(kv.Value) });
             return d;
         }
 
@@ -107,6 +110,15 @@ namespace InventoryManagerLight
             foreach (var e in d.MinStockThresholds)
                 if (!string.IsNullOrWhiteSpace(e.Key))
                     c.MinStockThresholds[e.Key] = e.Value;
+
+            c.CustomCategories.Clear();
+            foreach (var cat in d.CustomCategories)
+            {
+                if (string.IsNullOrWhiteSpace(cat.Name) || cat.Subtypes == null) continue;
+                var subtypes = cat.Subtypes.Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+                if (subtypes.Count > 0)
+                    c.CustomCategories[cat.Name.Trim()] = subtypes;
+            }
         }
     }
 
@@ -149,6 +161,16 @@ namespace InventoryManagerLight
         [XmlArray("MinStockThresholds")]
         [XmlArrayItem("Item")]
         public List<ImlConfigEntry> MinStockThresholds { get; set; } = new List<ImlConfigEntry>();
+
+        // Admin-defined custom categories. Each entry maps a category name to a list of exact
+        // SubtypeId strings. Players tag containers with IML:CategoryName like built-in ones.
+        // Example:
+        //   <Category name="MyModdedStuff">
+        //     <Subtype>AdvancedSteelPlate</Subtype>
+        //   </Category>
+        [XmlArray("CustomCategories")]
+        [XmlArrayItem("Category")]
+        public List<CustomCategoryData> CustomCategories { get; set; } = new List<CustomCategoryData>();
     }
 
     // A key/value pair that XmlSerializer can handle (Dictionary<K,V> is not supported natively).
@@ -156,5 +178,15 @@ namespace InventoryManagerLight
     {
         [XmlAttribute("key")]   public string Key   { get; set; }
         [XmlAttribute("value")] public int    Value { get; set; }
+    }
+
+    // One custom category entry in the XML config.
+    public class CustomCategoryData
+    {
+        [XmlAttribute("name")]
+        public string Name { get; set; }
+
+        [XmlElement("Subtype")]
+        public List<string> Subtypes { get; set; } = new List<string>();
     }
 }

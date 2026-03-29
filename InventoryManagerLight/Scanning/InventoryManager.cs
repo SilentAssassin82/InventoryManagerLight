@@ -36,6 +36,7 @@ namespace InventoryManagerLight
         // Sentinel category used to mark production block output snapshots as drain-only sources.
         // Not in CategoryMappings so ItemMatchesCategory always returns false — every item is misplaced.
         private const string DrainSentinelCategory = "__DRAIN__";
+        private CategoryResolver _categoryResolver;
 
         public InventoryManager(RuntimeConfig config = null)
         {
@@ -50,6 +51,7 @@ namespace InventoryManagerLight
 
             _snapshotter = new Snapshotter(_snapshotQueue, _config, _logger);
             var resolver = new CategoryResolver(_config);
+            _categoryResolver = resolver;
             _conveyorScanner = new ConveyorScanner(_config, _logger);
             var demand = new InventoryDemandTracker();
             _consumerScanner = new ConsumerScanner(_config, resolver, _logger);
@@ -77,6 +79,7 @@ namespace InventoryManagerLight
 
             _snapshotter = new Snapshotter(_snapshotQueue, _config, _logger);
             var resolver = new CategoryResolver(_config);
+            _categoryResolver = resolver;
             _planner = new Planner(_snapshotQueue, _batchQueue, _config, _logger, resolver);
             _applier = new ThrottledApplier(_batchQueue, _config, adapter ?? new DefaultInventoryAdapter(), _logger);
             _assemblerManager = new AssemblerManager(_config, _logger);
@@ -88,6 +91,87 @@ namespace InventoryManagerLight
         }
 
         public Snapshotter Snapshotter => _snapshotter;
+
+        // Rebuild the CategoryResolver from current config (call after !iml reload).
+        public void RebuildCategoryResolver()
+        {
+            _categoryResolver?.Rebuild(_config);
+        }
+
+#if TORCH
+        // Scans all game definitions and returns a sorted list of TypeId/SubtypeId strings that
+        // do not match any built-in or custom category. Used by !iml refreshdefs so admins can
+        // quickly identify modded subtypes to add to <CustomCategories> in iml-config.xml.
+        public List<string> GetUnknownSubtypes()
+        {
+            var result = new List<string>();
+            try
+            {
+                // Physical-item type fragments — only definitions whose TypeId contains one of
+                // these strings are candidate inventory items worth reporting.
+                var itemTypeFragments = new[]
+                {
+                    "Ingot", "Ore", "Component", "AmmoMagazine", "GunObject",
+                    "ContainerObject", "SeedItem", "ConsumableItem", "PhysicalItem"
+                };
+
+                var mgrType = Type.GetType("VRage.Game.MyDefinitionManager, VRage.Game");
+                if (mgrType == null) { result.Add("IML: Could not locate MyDefinitionManager — definitions not yet loaded?"); return result; }
+                var staticProp = mgrType.GetProperty("Static", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                var mgr = staticProp?.GetValue(null);
+                var getAll = mgrType.GetMethod("GetAllDefinitions", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                var all = getAll?.Invoke(mgr, null) as System.Collections.IEnumerable;
+                if (all == null) { result.Add("IML: GetAllDefinitions returned null — definitions not yet loaded?"); return result; }
+
+                var categories = _categoryResolver?.AllCategoryNames().ToArray() ?? Array.Empty<string>();
+                var unknown = new List<string>();
+
+                foreach (var d in all)
+                {
+                    try
+                    {
+                        var idProp = d.GetType().GetProperty("Id");
+                        if (!(idProp?.GetValue(d) is VRage.Game.MyDefinitionId id)) continue;
+                        var idStr = id.ToString();
+                        // filter to inventory-item types only
+                        bool isItem = false;
+                        foreach (var frag in itemTypeFragments)
+                            if (idStr.IndexOf(frag, StringComparison.OrdinalIgnoreCase) >= 0) { isItem = true; break; }
+                        if (!isItem) continue;
+                        // check against all categories
+                        bool matched = false;
+                        foreach (var cat in categories)
+                        {
+                            if (_categoryResolver.ItemMatchesCategory(id, idStr, cat)) { matched = true; break; }
+                        }
+                        if (!matched) unknown.Add(idStr);
+                    }
+                    catch { }
+                }
+
+                unknown.Sort(StringComparer.OrdinalIgnoreCase);
+                if (unknown.Count == 0)
+                {
+                    result.Add("IML: All loaded item definitions are covered by existing categories.");
+                }
+                else
+                {
+                    result.Add($"IML: {unknown.Count} item definition(s) not covered by any category:");
+                    foreach (var u in unknown)
+                    {
+                        result.Add("  " + u);
+                        _logger?.Info("IML refreshdefs — uncategorised: " + u);
+                    }
+                    result.Add("Add subtypes to <CustomCategories> in iml-config.xml and run !iml reload.");
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Add("IML: refreshdefs failed — " + ex.Message);
+            }
+            return result;
+        }
+#endif
 
         // Dump runtime state for diagnostics (call from game thread)
         public void DumpState()
@@ -411,11 +495,22 @@ namespace InventoryManagerLight
             {
                 try
                 {
-                    var text = BuildLcdContent(catContainers, catItems, catSubtypeTotals, panel.filter);
-                    LcdManager.Instance.EnqueueUpdate(panel.entityId, text);
+                    bool isAlert;
+                    var text = BuildLcdContent(catContainers, catItems, catSubtypeTotals, panel.filter, out isAlert);
+                    LcdManager.Instance.EnqueueUpdate(panel.entityId, text, isAlert);
                 }
                 catch { }
             }
+
+            // Log a server-side warning for every category currently below its threshold.
+            foreach (var cat in catItems.Keys)
+            {
+                int total; catItems.TryGetValue(cat, out total);
+                int threshold;
+                if (_config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold)
+                    _logger?.Warn($"IML: Low stock — {cat}: {total:N0}/{threshold:N0}");
+            }
+
             LcdManager.Instance.ApplyPendingUpdates();
         }
 
@@ -445,25 +540,95 @@ namespace InventoryManagerLight
             return null;
         }
 
-        private string BuildLcdContent(Dictionary<string, int> catContainers, Dictionary<string, int> catItems, Dictionary<string, Dictionary<string, int>> catSubtypeTotals, string filter)
+        // Returns a Unicode block-character progress bar.
+        // Example: ProgressBar(3, 10, 10) => "[███░░░░░░░]"
+        private static string ProgressBar(int current, int max, int width = 10)
         {
+            if (max <= 0) return string.Empty;
+            double ratio = Math.Min(1.0, (double)current / max);
+            int filled = (int)Math.Round(ratio * width);
+            return "[" + new string('█', filled) + new string('░', width - filled) + "]";
+        }
+
+        private string BuildLcdContent(Dictionary<string, int> catContainers, Dictionary<string, int> catItems, Dictionary<string, Dictionary<string, int>> catSubtypeTotals, string filter, out bool isAlert)
+        {
+            isAlert = false;
             var sb = new System.Text.StringBuilder();
-            if (string.IsNullOrEmpty(filter))
+            if (string.Equals(filter, "SUMMARY", StringComparison.OrdinalIgnoreCase))
+            {
+                // SUMMARY: categories sorted by worst deficit first, then no-threshold categories by item count.
+                sb.AppendLine("[IML Summary]");
+                var withThreshold   = new List<string>();
+                var withoutThreshold = new List<string>();
+                foreach (var cat in catContainers.Keys)
+                {
+                    if (_config.MinStockThresholds.ContainsKey(cat)) withThreshold.Add(cat);
+                    else                                               withoutThreshold.Add(cat);
+                }
+                withThreshold.Sort((a, b) =>
+                {
+                    int ta, tb2;
+                    _config.MinStockThresholds.TryGetValue(a, out ta);
+                    _config.MinStockThresholds.TryGetValue(b, out tb2);
+                    int ia = 0; catItems.TryGetValue(a, out ia);
+                    int ib = 0; catItems.TryGetValue(b, out ib);
+                    double ra = ta > 0 ? (double)ia / ta : 1.0;
+                    double rb = tb2 > 0 ? (double)ib / tb2 : 1.0;
+                    return ra.CompareTo(rb); // ascending: worst (lowest ratio) first
+                });
+                withoutThreshold.Sort((a, b) =>
+                {
+                    int ia = 0; catItems.TryGetValue(a, out ia);
+                    int ib = 0; catItems.TryGetValue(b, out ib);
+                    return ib.CompareTo(ia); // descending: highest count first
+                });
+                foreach (var cat in withThreshold)
+                {
+                    int total = 0; catItems.TryGetValue(cat, out total);
+                    int threshold; _config.MinStockThresholds.TryGetValue(cat, out threshold);
+                    bool isLow = total < threshold;
+                    if (isLow) isAlert = true;
+                    string alert = isLow ? " [!]" : "";
+                    sb.AppendLine($"{cat}{alert}");
+                    int pct = threshold > 0 ? (int)Math.Round((double)total / threshold * 100) : 100;
+                    sb.AppendLine($"  {ProgressBar(total, threshold)} {total:N0}/{threshold:N0} {pct}%");
+                }
+                foreach (var cat in withoutThreshold)
+                {
+                    int total = 0; catItems.TryGetValue(cat, out total);
+                    sb.AppendLine($"{cat}  {total:N0}");
+                }
+                sb.Append($"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}");
+            }
+            else if (string.IsNullOrEmpty(filter))
             {
                 sb.AppendLine("[IML Status]");
                 foreach (var cat in catContainers.Keys)
                 {
-                    int ctns = catContainers[cat];
+                    int ctns  = catContainers[cat];
                     int total = 0; catItems.TryGetValue(cat, out total);
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold;
-                    sb.AppendLine($"{cat,-12} {ctns,2}x {total,9:N0}{(isLow ? " [!]" : "")}");
+                    if (isLow) isAlert = true;
+                    string alert = isLow ? " [!]" : "";
+                    string boxes = ctns == 1 ? "1 box" : $"{ctns} boxes";
+                    if (threshold > 0)
+                    {
+                        int pct = (int)Math.Round((double)total / threshold * 100);
+                        sb.AppendLine($"{cat} ({boxes}){alert}");
+                        sb.AppendLine($"  {ProgressBar(total, threshold)} {total:N0}/{threshold:N0} {pct}%");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{cat} ({boxes}){alert}  {total:N0}");
+                    }
                 }
                 sb.Append($"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}");
             }
             else
             {
                 sb.AppendLine($"[IML: {filter}]");
+                sb.AppendLine();
                 Dictionary<string, int> subtypeMap;
                 catSubtypeTotals.TryGetValue(filter, out subtypeMap);
                 if (subtypeMap != null && subtypeMap.Count > 0)
@@ -471,12 +636,23 @@ namespace InventoryManagerLight
                     var sorted = new List<KeyValuePair<string, int>>(subtypeMap);
                     sorted.Sort((a, b) => b.Value.CompareTo(a.Value));
                     foreach (var kv in sorted)
-                        sb.AppendLine($" {kv.Key,-16} {kv.Value,8:N0}");
+                        sb.AppendLine($"  {kv.Key}  {kv.Value:N0}");
                     int total = 0; foreach (var kv in subtypeMap) total += kv.Value;
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(filter, out threshold) && total < threshold;
-                    sb.AppendLine($" {new string('-', 25)}");
-                    sb.Append($" {"Total",-16} {total,8:N0}{(isLow ? " [!]" : "")}");
+                    if (isLow) isAlert = true;
+                    sb.AppendLine();
+                    if (threshold > 0)
+                    {
+                        int pct = (int)Math.Round((double)total / threshold * 100);
+                        string alert = isLow ? " [!]" : "";
+                        sb.AppendLine($"Total: {total:N0}{alert}");
+                        sb.Append($"  {ProgressBar(total, threshold)} {total:N0}/{threshold:N0} {pct}%");
+                    }
+                    else
+                    {
+                        sb.Append($"Total: {total:N0}");
+                    }
                 }
                 else
                 {
@@ -734,6 +910,7 @@ namespace InventoryManagerLight
                 }
 
                 result.Add($"Passes:{_totalSortPasses:N0}  Ops:{_applier.TotalOpsCompleted:N0}  Moved:{_applier.TotalItemsMoved:N0}");
+                int lowCount = 0;
                 foreach (var cat in catContainers.Keys)
                 {
                     int containers = catContainers[cat];
@@ -744,15 +921,223 @@ namespace InventoryManagerLight
                     var cLabel = containers == 1 ? "container" : "containers";
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && items < threshold;
-                    var lowNote    = isLow   ? $"  [LOW — min {threshold:N0}]" : "";
+                    if (isLow) lowCount++;
+                    var lowNote    = isLow   ? $"  [LOW: {items:N0}/{threshold:N0}]" : "";
                     var lockedNote = locked > 0 ? $"  [{locked} LOCKED]" : "";
                     result.Add($"{cat,-12} {containers,2} {cLabel}, {items,9:N0} item(s){lowNote}{lockedNote}");
                 }
+                if (lowCount > 0)
+                    result.Add($"⚠ {lowCount} category/categories below minimum stock threshold.");
 #endif
             }
             catch { }
             return result;
         }
+
+        // ── Bulk tagging helpers ─────────────────────────────────────────────────
+#if TORCH
+        // Resolve grids by numeric entity ID or case-insensitive name substring.
+        // Multiple grids may match on name; a single grid is always returned for an exact ID.
+        private static List<VRage.Game.ModAPI.IMyCubeGrid> FindGrids(string gridIdOrName)
+        {
+            var results = new List<VRage.Game.ModAPI.IMyCubeGrid>();
+            try
+            {
+                var entities = new HashSet<VRage.ModAPI.IMyEntity>();
+                MyAPIGateway.Entities.GetEntities(entities, e => e is VRage.Game.ModAPI.IMyCubeGrid);
+                long entityId;
+                bool isId = long.TryParse(gridIdOrName, out entityId);
+                foreach (var ent in entities)
+                {
+                    var grid = ent as VRage.Game.ModAPI.IMyCubeGrid;
+                    if (grid == null) continue;
+                    if (isId)
+                    {
+                        if (grid.EntityId == entityId) { results.Add(grid); break; }
+                    }
+                    else if (grid.DisplayName != null &&
+                             grid.DisplayName.IndexOf(gridIdOrName, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        results.Add(grid);
+                    }
+                }
+            }
+            catch { }
+            return results;
+        }
+
+        // Returns true if the block type is a production machine (assembler, refinery, gas generator)
+        // or an LCD panel — blocks that should never be bulk-tagged as item storage.
+        private static bool IsProductionOrDisplayBlock(Sandbox.ModAPI.IMyTerminalBlock tb)
+        {
+            if (tb is Sandbox.ModAPI.IMyTextPanel) return true;
+            var t = tb.GetType().Name;
+            return t.IndexOf("Assembler",   StringComparison.OrdinalIgnoreCase) >= 0
+                || t.IndexOf("Refinery",    StringComparison.OrdinalIgnoreCase) >= 0
+                || t.IndexOf("GasGenerator",StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        // Adds <tag> to CustomData of every eligible inventory block on the matching grid(s).
+        // Skips: locked blocks, production/display blocks, blocks already carrying the tag.
+        // Returns human-readable result lines for the command response.
+        public List<string> BulkTagGrid(string gridIdOrName, string tag)
+        {
+            var result = new List<string>();
+            try
+            {
+                var grids = FindGrids(gridIdOrName);
+                if (grids.Count == 0)
+                {
+                    result.Add($"IML: No grid found matching '{gridIdOrName}'. Use '!iml list' to see entity IDs.");
+                    return result;
+                }
+
+                // Ensure the tag carries the configured prefix (accept bare category name too).
+                var prefix = _config.ContainerTagPrefix ?? "IML:";
+                var fullTag = tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? tag : prefix + tag;
+
+                int tagged = 0, alreadyTagged = 0, skipped = 0;
+                foreach (var grid in grids)
+                {
+                    var slims = new List<VRage.Game.ModAPI.IMySlimBlock>();
+                    grid.GetBlocks(slims, b => b?.FatBlock is Sandbox.ModAPI.IMyTerminalBlock);
+                    foreach (var slim in slims)
+                    {
+                        try
+                        {
+                            var tb = slim.FatBlock as Sandbox.ModAPI.IMyTerminalBlock;
+                            if (tb == null || tb.InventoryCount == 0) continue;
+                            if (IsProductionOrDisplayBlock(tb)) { skipped++; continue; }
+                            var cd   = tb.CustomData ?? string.Empty;
+                            var name = tb.CustomName  ?? string.Empty;
+                            // Skip locked containers
+                            if (cd.IndexOf(prefix + "LOCKED", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf(prefix + "LOCKED", StringComparison.OrdinalIgnoreCase) >= 0)
+                            { skipped++; continue; }
+                            // Skip if tag already present
+                            if (cd.IndexOf(fullTag, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf(fullTag, StringComparison.OrdinalIgnoreCase) >= 0)
+                            { alreadyTagged++; continue; }
+                            tb.CustomData = string.IsNullOrWhiteSpace(cd) ? fullTag : cd.TrimEnd() + "\n" + fullTag;
+                            tagged++;
+                        }
+                        catch { }
+                    }
+                }
+
+                var gridLabel = grids.Count == 1 ? $"'{grids[0].DisplayName}'" : $"{grids.Count} grids";
+                result.Add($"IML: tagall on {gridLabel} with tag '{fullTag}':");
+                result.Add($"  Tagged: {tagged}  Already tagged: {alreadyTagged}  Skipped: {skipped}");
+            }
+            catch (Exception ex) { result.Add("IML: tagall failed — " + ex.Message); }
+            return result;
+        }
+
+        // Removes all IML:* lines from CustomData on every eligible block on the matching grid(s).
+        // Leaves block names untouched; skips locked containers.
+        public List<string> ClearTagsOnGrid(string gridIdOrName)
+        {
+            var result = new List<string>();
+            try
+            {
+                var grids = FindGrids(gridIdOrName);
+                if (grids.Count == 0)
+                {
+                    result.Add($"IML: No grid found matching '{gridIdOrName}'. Use '!iml list' to see entity IDs.");
+                    return result;
+                }
+
+                var prefix = _config.ContainerTagPrefix ?? "IML:";
+                int cleared = 0, skipped = 0;
+                foreach (var grid in grids)
+                {
+                    var slims = new List<VRage.Game.ModAPI.IMySlimBlock>();
+                    grid.GetBlocks(slims, b => b?.FatBlock is Sandbox.ModAPI.IMyTerminalBlock);
+                    foreach (var slim in slims)
+                    {
+                        try
+                        {
+                            var tb = slim.FatBlock as Sandbox.ModAPI.IMyTerminalBlock;
+                            if (tb == null) continue;
+                            var cd   = tb.CustomData ?? string.Empty;
+                            var name = tb.CustomName  ?? string.Empty;
+                            if (cd.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                            // Skip locked containers
+                            if (cd.IndexOf(prefix + "LOCKED", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                name.IndexOf(prefix + "LOCKED", StringComparison.OrdinalIgnoreCase) >= 0)
+                            { skipped++; continue; }
+                            // Remove every line that starts with the IML prefix
+                            var lines = cd.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                            var kept  = System.Linq.Enumerable.ToArray(
+                                System.Linq.Enumerable.Where(lines,
+                                    l => l.Trim().IndexOf(prefix, StringComparison.OrdinalIgnoreCase) != 0));
+                            var newCd = string.Join("\n", kept);
+                            if (newCd != cd) { tb.CustomData = newCd; cleared++; }
+                        }
+                        catch { }
+                    }
+                }
+
+                var gridLabel = grids.Count == 1 ? $"'{grids[0].DisplayName}'" : $"{grids.Count} grids";
+                result.Add($"IML: cleartags on {gridLabel}: {cleared} block(s) cleared, {skipped} locked block(s) skipped.");
+            }
+            catch (Exception ex) { result.Add("IML: cleartags failed — " + ex.Message); }
+            return result;
+        }
+
+        // Exports all current IML tags (CustomData and block names) across every grid to a text file.
+        // Returns summary lines for the command response.
+        public List<string> BackupTags(string outputPath)
+        {
+            var result = new List<string>();
+            try
+            {
+                var prefix = _config.ContainerTagPrefix ?? "IML:";
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"# IML tag backup — {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+                sb.AppendLine($"# Format: GridName | EntityId | BlockName | IML lines from CustomData/Name");
+                sb.AppendLine();
+
+                int blockCount = 0;
+                var entities = new HashSet<VRage.ModAPI.IMyEntity>();
+                MyAPIGateway.Entities.GetEntities(entities, e => e is VRage.Game.ModAPI.IMyCubeGrid);
+                foreach (var ent in entities)
+                {
+                    var grid = ent as VRage.Game.ModAPI.IMyCubeGrid;
+                    if (grid == null) continue;
+                    var slims = new List<VRage.Game.ModAPI.IMySlimBlock>();
+                    grid.GetBlocks(slims, b => b?.FatBlock is Sandbox.ModAPI.IMyTerminalBlock);
+                    foreach (var slim in slims)
+                    {
+                        try
+                        {
+                            var tb = slim.FatBlock as Sandbox.ModAPI.IMyTerminalBlock;
+                            if (tb == null) continue;
+                            var cd   = tb.CustomData ?? string.Empty;
+                            var name = tb.CustomName  ?? string.Empty;
+                            // Collect IML lines from CustomData
+                            var imlLines = new List<string>();
+                            foreach (var ln in cd.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+                                if (ln.Trim().IndexOf(prefix, StringComparison.OrdinalIgnoreCase) == 0)
+                                    imlLines.Add("CD:" + ln.Trim());
+                            // Collect IML tokens from block name
+                            if (name.IndexOf(prefix, StringComparison.OrdinalIgnoreCase) >= 0)
+                                imlLines.Add("NAME:" + name);
+                            if (imlLines.Count == 0) continue;
+                            sb.AppendLine($"{grid.DisplayName} | {tb.EntityId} | {name} | {string.Join(" | ", imlLines)}");
+                            blockCount++;
+                        }
+                        catch { }
+                    }
+                }
+
+                System.IO.File.WriteAllText(outputPath, sb.ToString());
+                result.Add($"IML: Backup written — {blockCount} tagged block(s) → {outputPath}");
+            }
+            catch (Exception ex) { result.Add("IML: backuptags failed — " + ex.Message); }
+            return result;
+        }
+#endif
 
         // Walks every inventory slot on every block and returns a per-slot breakdown of a specific
         // item subtype. Used by !iml stockdump to diagnose phantom or unexpected stock counts.

@@ -1,5 +1,7 @@
 #if TORCH
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using Torch.Commands;
 
@@ -125,7 +127,67 @@ namespace InventoryManagerLight
             var p = Plugin;
             if (p?.Manager == null || p.ConfigManager == null) { Context.Respond("IML: Plugin not ready."); return; }
             p.ConfigManager.Load(p.Config);
+            p.Manager.RebuildCategoryResolver();
             Context.Respond($"IML: Config reloaded from {p.ConfigManager.FilePath}");
+        }
+
+        [Command("refreshdefs", "Scans all loaded game definitions and logs any item subtypes not covered by a category.")]
+        public void RefreshDefs()
+        {
+            var p = Plugin;
+            if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            var lines = p.Manager.GetUnknownSubtypes();
+            if (lines == null || lines.Count == 0) { Context.Respond("IML: No output from definition scan."); return; }
+            var sb = new StringBuilder();
+            foreach (var line in lines)
+                sb.AppendLine(line);
+            Context.Respond(sb.ToString().TrimEnd());
+        }
+
+        [Command("tagall", "Adds an IML tag to all inventory containers on a grid. Usage: !iml tagall <gridId|name> <category>")]
+        public void TagAll(string gridIdOrName, string category)
+        {
+            var p = Plugin;
+            if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            if (string.IsNullOrWhiteSpace(gridIdOrName) || string.IsNullOrWhiteSpace(category))
+            {
+                Context.Respond("IML: Usage: !iml tagall <gridId|name> <category>   e.g. !iml tagall 12345 COMPONENTS");
+                return;
+            }
+            var lines = p.Manager.BulkTagGrid(gridIdOrName, category);
+            var sb = new StringBuilder();
+            foreach (var line in lines) sb.AppendLine(line);
+            Context.Respond(sb.ToString().TrimEnd());
+        }
+
+        [Command("cleartags", "Removes all IML tags from CustomData on unlocked containers of a grid. Usage: !iml cleartags <gridId|name>")]
+        public void ClearTags(string gridIdOrName)
+        {
+            var p = Plugin;
+            if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            if (string.IsNullOrWhiteSpace(gridIdOrName))
+            {
+                Context.Respond("IML: Usage: !iml cleartags <gridId|name>   e.g. !iml cleartags 12345");
+                return;
+            }
+            var lines = p.Manager.ClearTagsOnGrid(gridIdOrName);
+            var sb = new StringBuilder();
+            foreach (var line in lines) sb.AppendLine(line);
+            Context.Respond(sb.ToString().TrimEnd());
+        }
+
+        [Command("backuptags", "Exports all current IML tags across every grid to a timestamped file in the plugin folder.")]
+        public void BackupTags()
+        {
+            var p = Plugin;
+            if (p?.Manager == null || p.ConfigManager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            var pluginDir = Path.GetDirectoryName(p.ConfigManager.FilePath) ?? ".";
+            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var outputPath = Path.Combine(pluginDir, $"iml-tags-{timestamp}.txt");
+            var lines = p.Manager.BackupTags(outputPath);
+            var sb = new StringBuilder();
+            foreach (var line in lines) sb.AppendLine(line);
+            Context.Respond(sb.ToString().TrimEnd());
         }
         }
     }

@@ -123,5 +123,11 @@ namespace InventoryManagerLight
         // matches the grid/group context. This helps keep multiple independent loops on the same grid
         // separated. When false (default) container-level groups are optional and fallback to grid group.
         public bool RequireContainerGroupMatch { get; set; } = false;
+
+        // Admin-defined custom categories loaded from the CustomCategories section of iml-config.xml.
+        // Keys are category names (case-insensitive); values are lists of exact SubtypeId strings.
+        // Example: { "MyModdedStuff": ["AdvancedSteelPlate", "HeavyArmorPlate"] }
+        // Players tag containers with IML:MyModdedStuff exactly like built-in categories.
+        public Dictionary<string, List<string>> CustomCategories { get; } = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
     }
 }

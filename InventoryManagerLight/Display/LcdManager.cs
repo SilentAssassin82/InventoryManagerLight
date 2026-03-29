@@ -4,6 +4,7 @@ using System.Collections.Generic;
 #if TORCH
 using Sandbox.ModAPI;
 using VRage.ModAPI;
+using VRageMath;
 #endif
 
 namespace InventoryManagerLight
@@ -39,11 +40,11 @@ namespace InventoryManagerLight
             _logger = logger ?? new DefaultLogger();
         }
 
-        public void EnqueueUpdate(long lcdEntityId, string text)
+        public void EnqueueUpdate(long lcdEntityId, string text, bool isAlert = false)
         {
             if (string.IsNullOrEmpty(text)) return;
-            _queue.Enqueue(new LcdUpdate { EntityId = lcdEntityId, Text = text });
-            _logger?.Debug($"Enqueued LCD update for {lcdEntityId} len={text.Length}");
+            _queue.Enqueue(new LcdUpdate { EntityId = lcdEntityId, Text = text, IsAlert = isAlert });
+            _logger?.Debug($"Enqueued LCD update for {lcdEntityId} len={text.Length} alert={isAlert}");
         }
 
         // Must be called on game thread
@@ -58,7 +59,17 @@ namespace InventoryManagerLight
                     var panel = ent as IMyTextPanel;
                     if (panel == null) continue;
                     panel.WriteText(upd.Text);
-                    _logger?.Debug($"LCD {upd.EntityId}: wrote {upd.Text?.Length ?? 0} chars");
+                    // Change font colour to orange on alert, restore white when OK.
+                    // Uses reflection since SetValue<T> is not consistently exposed across SE versions.
+                    try
+                    {
+                        var color = upd.IsAlert ? new Color(255, 140, 0) : Color.White;
+                        var prop = panel.GetType().GetProperty("FontColor",
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                        if (prop != null && prop.CanWrite) prop.SetValue(panel, color);
+                    }
+                    catch { }
+                    _logger?.Debug($"LCD {upd.EntityId}: wrote {upd.Text?.Length ?? 0} chars alert={upd.IsAlert}");
                 }
                 catch (Exception ex)
                 {
@@ -77,6 +88,7 @@ namespace InventoryManagerLight
         {
             public long EntityId;
             public string Text;
+            public bool IsAlert;
         }
     }
 }

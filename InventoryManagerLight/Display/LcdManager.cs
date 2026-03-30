@@ -59,16 +59,10 @@ namespace InventoryManagerLight
                     var panel = ent as IMyTextPanel;
                     if (panel == null) continue;
                     panel.WriteText(upd.Text);
-                    // Change font colour to orange on alert, restore white when OK.
-                    // Uses reflection since SetValue<T> is not consistently exposed across SE versions.
-                    try
-                    {
-                        var color = upd.IsAlert ? new Color(255, 140, 0) : Color.White;
-                        var prop = panel.GetType().GetProperty("FontColor",
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                        if (prop != null && prop.CanWrite) prop.SetValue(panel, color);
-                    }
-                    catch { }
+                    // Always reset FontColor to white — SE multiplies the panel's FontColor by each
+                    // embedded 0xE100 colour char, so any non-white base tint corrupts the palette.
+                    // Alert state is communicated entirely through the embedded colour chars in the text.
+                    panel.FontColor = Color.White;
                     _logger?.Debug($"LCD {upd.EntityId}: wrote {upd.Text?.Length ?? 0} chars alert={upd.IsAlert}");
                 }
                 catch (Exception ex)

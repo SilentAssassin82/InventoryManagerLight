@@ -550,15 +550,34 @@ namespace InventoryManagerLight
             return "[" + new string('█', filled) + new string('░', width - filled) + "]";
         }
 
+        // Returns a single 0xE100-palette colour character (r, g, b each 0-7).
+        private static char Clr(int r, int g, int b) => (char)(0xE100 + (r << 6) + (g << 3) + b);
+
+        // Appends a solid-colour-block progress bar (CCTV pixel-art style) directly into sb.
+        // Every segment IS a 0xE100 colour char: filled = bright amber/green, empty = pure black.
+        // Each char renders as a coloured square on the SE LCD — together they form a solid bar.
+        // Caller must append a colour-reset char after this before rendering any text.
+        private static void AppendColourBar(System.Text.StringBuilder sb, int current, int max, bool isLow, int width = 24)
+        {
+            char cEmpty = Clr(0, 0, 0);  // pure black — maximum contrast with filled segments
+            if (max <= 0) { for (int i = 0; i < width; i++) sb.Append(cEmpty); return; }
+            double ratio  = Math.Min(1.0, (double)current / max);
+            int    filled = (int)Math.Round(ratio * width);
+            char   cFill  = isLow ? Clr(7, 4, 0) : Clr(2, 7, 2);  // amber : bright green
+            for (int i = 0;      i < filled; i++) sb.Append(cFill);
+            for (int i = filled; i < width;  i++) sb.Append(cEmpty);
+        }
+
         private string BuildLcdContent(Dictionary<string, int> catContainers, Dictionary<string, int> catItems, Dictionary<string, Dictionary<string, int>> catSubtypeTotals, string filter, out bool isAlert)
         {
             isAlert = false;
             var sb = new System.Text.StringBuilder();
+
             if (string.Equals(filter, "SUMMARY", StringComparison.OrdinalIgnoreCase))
             {
                 // SUMMARY: categories sorted by worst deficit first, then no-threshold categories by item count.
                 sb.AppendLine("[IML Summary]");
-                var withThreshold   = new List<string>();
+                var withThreshold    = new List<string>();
                 var withoutThreshold = new List<string>();
                 foreach (var cat in catContainers.Keys)
                 {
@@ -588,15 +607,15 @@ namespace InventoryManagerLight
                     int threshold; _config.MinStockThresholds.TryGetValue(cat, out threshold);
                     bool isLow = total < threshold;
                     if (isLow) isAlert = true;
-                    string alert = isLow ? " [!]" : "";
-                    sb.AppendLine($"{cat}{alert}");
+                    sb.AppendLine(isLow ? $"{cat} [!]" : cat);
                     int pct = threshold > 0 ? (int)Math.Round((double)total / threshold * 100) : 100;
-                    sb.AppendLine($"  {ProgressBar(total, threshold)} {total:N0}/{threshold:N0} {pct}%");
+                    AppendColourBar(sb, total, threshold, isLow); sb.AppendLine();
+                    sb.AppendLine($" {total.ToString("N0")}/{threshold.ToString("N0")} {pct}%");
                 }
                 foreach (var cat in withoutThreshold)
                 {
                     int total = 0; catItems.TryGetValue(cat, out total);
-                    sb.AppendLine($"{cat}  {total:N0}");
+                    sb.AppendLine($"{cat}  {total.ToString("N0")}");
                 }
                 sb.Append($"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}");
             }
@@ -610,17 +629,17 @@ namespace InventoryManagerLight
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold;
                     if (isLow) isAlert = true;
-                    string alert = isLow ? " [!]" : "";
                     string boxes = ctns == 1 ? "1 box" : $"{ctns} boxes";
+                    sb.AppendLine(isLow ? $"{cat} ({boxes}) [!]" : $"{cat} ({boxes})");
                     if (threshold > 0)
                     {
                         int pct = (int)Math.Round((double)total / threshold * 100);
-                        sb.AppendLine($"{cat} ({boxes}){alert}");
-                        sb.AppendLine($"  {ProgressBar(total, threshold)} {total:N0}/{threshold:N0} {pct}%");
+                        AppendColourBar(sb, total, threshold, isLow); sb.AppendLine();
+                        sb.AppendLine($" {total.ToString("N0")}/{threshold.ToString("N0")} {pct}%");
                     }
                     else
                     {
-                        sb.AppendLine($"{cat} ({boxes}){alert}  {total:N0}");
+                        sb.AppendLine($"  {total.ToString("N0")}");
                     }
                 }
                 sb.Append($"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}");
@@ -636,22 +655,20 @@ namespace InventoryManagerLight
                     var sorted = new List<KeyValuePair<string, int>>(subtypeMap);
                     sorted.Sort((a, b) => b.Value.CompareTo(a.Value));
                     foreach (var kv in sorted)
-                        sb.AppendLine($"  {kv.Key}  {kv.Value:N0}");
+                    {
+                        sb.AppendLine($"  {kv.Key}  {kv.Value.ToString("N0")}");
+                    }
                     int total = 0; foreach (var kv in subtypeMap) total += kv.Value;
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(filter, out threshold) && total < threshold;
                     if (isLow) isAlert = true;
-                    sb.AppendLine();
+                    sb.AppendLine(new string('─', 17));
+                    sb.AppendLine(isLow ? $"Total: {total.ToString("N0")} [!]" : $"Total: {total.ToString("N0")}");
                     if (threshold > 0)
                     {
                         int pct = (int)Math.Round((double)total / threshold * 100);
-                        string alert = isLow ? " [!]" : "";
-                        sb.AppendLine($"Total: {total:N0}{alert}");
-                        sb.Append($"  {ProgressBar(total, threshold)} {total:N0}/{threshold:N0} {pct}%");
-                    }
-                    else
-                    {
-                        sb.Append($"Total: {total:N0}");
+                        AppendColourBar(sb, total, threshold, isLow); sb.AppendLine();
+                        sb.Append($" {total.ToString("N0")}/{threshold.ToString("N0")} {pct}%");
                     }
                 }
                 else

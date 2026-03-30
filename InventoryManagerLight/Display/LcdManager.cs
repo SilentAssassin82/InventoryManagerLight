@@ -78,10 +78,28 @@ namespace InventoryManagerLight
 
                     var   size = surface.SurfaceSize;
                     float sc   = size.X / BASE;
-                    float pad  = PAD    * sc;
-                    float rh   = ROW_H  * sc;
-                    float bh   = BAR_H  * sc;
-                    float iz   = ICON_SZ * sc;
+
+                    // Measure total content height (in BASE units) to compute shrink-to-fit factor
+                    float neededH = 0f;
+                    foreach (var r in upd.Rows)
+                    {
+                        switch (r.RowKind)
+                        {
+                            case LcdSpriteRow.Kind.Header:    neededH += ROW_H * 1.1f;  break;
+                            case LcdSpriteRow.Kind.Separator: neededH += 6f;             break;
+                            case LcdSpriteRow.Kind.Item:      neededH += ROW_H;          break;
+                            case LcdSpriteRow.Kind.Bar:       neededH += BAR_H + 4f;     break;
+                            case LcdSpriteRow.Kind.Stat:      neededH += ROW_H * 0.9f;  break;
+                            case LcdSpriteRow.Kind.Footer:    neededH += ROW_H * 0.85f; break;
+                        }
+                    }
+                    float availH = size.Y / sc - PAD;
+                    float fs     = availH < neededH ? Math.Max(0.4f, availH / neededH) : 1.0f;
+
+                    float pad  = PAD     * sc * fs;
+                    float rh   = ROW_H   * sc * fs;
+                    float bh   = BAR_H   * sc * fs;
+                    float iz   = ICON_SZ * sc * fs;
                     float x    = pad;
                     float y    = pad;
                     float w    = size.X - 2f * pad;
@@ -94,7 +112,7 @@ namespace InventoryManagerLight
                             {
                                 case LcdSpriteRow.Kind.Header:
                                 {
-                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.85f * sc, TextAlignment.LEFT);
+                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.85f * sc * fs, TextAlignment.LEFT);
                                     s.Position = new Vector2(x, y);
                                     frame.Add(s);
                                     y += rh * 1.1f;
@@ -103,9 +121,9 @@ namespace InventoryManagerLight
                                 case LcdSpriteRow.Kind.Separator:
                                 {
                                     frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
-                                        new Vector2(x + w / 2f, y + sc),
-                                        new Vector2(w, Math.Max(1f, 2f * sc)), new Color(55, 55, 60)));
-                                    y += 6f * sc;
+                                        new Vector2(x + w / 2f, y + sc * fs),
+                                        new Vector2(w, Math.Max(1f, 2f * sc * fs)), new Color(55, 55, 60)));
+                                    y += 6f * sc * fs;
                                     break;
                                 }
                                 case LcdSpriteRow.Kind.Item:
@@ -116,14 +134,14 @@ namespace InventoryManagerLight
                                         frame.Add(new MySprite(SpriteType.TEXTURE, row.IconSprite,
                                             new Vector2(x + iz / 2f, y + iz / 2f),
                                             new Vector2(iz, iz), Color.White));
-                                        tx = x + iz + 4f * sc;
+                                        tx = x + iz + 4f * sc * fs;
                                     }
-                                    var ts = MySprite.CreateText(row.Text, "White", row.TextColor, 0.72f * sc, TextAlignment.LEFT);
+                                    var ts = MySprite.CreateText(row.Text, "White", row.TextColor, 0.72f * sc * fs, TextAlignment.LEFT);
                                     ts.Position = new Vector2(tx, y);
                                     frame.Add(ts);
                                     if (row.ShowAlert)
                                     {
-                                        var al = MySprite.CreateText("!", "White", new Color(255, 140, 0), 0.85f * sc, TextAlignment.RIGHT);
+                                        var al = MySprite.CreateText("!", "White", new Color(255, 140, 0), 0.85f * sc * fs, TextAlignment.RIGHT);
                                         al.Position = new Vector2(x + w, y);
                                         frame.Add(al);
                                     }
@@ -142,12 +160,12 @@ namespace InventoryManagerLight
                                         frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
                                             new Vector2(x + fillW + (w - fillW) / 2f, y + bh / 2f),
                                             new Vector2(w - fillW, bh), new Color(35, 35, 40)));
-                                    y += bh + 4f * sc;
+                                    y += bh + 4f * sc * fs;
                                     break;
                                 }
                                 case LcdSpriteRow.Kind.Stat:
                                 {
-                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.68f * sc, TextAlignment.LEFT);
+                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.68f * sc * fs, TextAlignment.LEFT);
                                     s.Position = new Vector2(x, y);
                                     frame.Add(s);
                                     y += rh * 0.9f;
@@ -155,7 +173,7 @@ namespace InventoryManagerLight
                                 }
                                 case LcdSpriteRow.Kind.Footer:
                                 {
-                                    var s = MySprite.CreateText(row.Text, "White", new Color(110, 110, 115), 0.6f * sc, TextAlignment.LEFT);
+                                    var s = MySprite.CreateText(row.Text, "White", new Color(110, 110, 115), 0.6f * sc * fs, TextAlignment.LEFT);
                                     s.Position = new Vector2(x, y);
                                     frame.Add(s);
                                     y += rh * 0.85f;

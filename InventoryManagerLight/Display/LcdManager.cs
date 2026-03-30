@@ -1,16 +1,16 @@
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 #if TORCH
 using Sandbox.ModAPI;
 using VRage.ModAPI;
+using VRage.Game.GUI.TextPanel;
 using VRageMath;
 #endif
 
 namespace InventoryManagerLight
 {
-    // Simple LCD manager to queue text updates to LCDs (or other displays).
-    // This is a lightweight thread-safe queue; actual rendering must happen on game thread.
+    // Queues sprite-based LCD updates built on the game thread and applies them via DrawFrame.
+    // Thread-safe queue; ApplyPendingUpdates must be called on the game thread.
     public class LcdManager
     {
         private static readonly Lazy<LcdManager> _lazy = new Lazy<LcdManager>(() => new LcdManager());
@@ -19,6 +19,13 @@ namespace InventoryManagerLight
         private readonly ConcurrentQueue<LcdUpdate> _queue = new ConcurrentQueue<LcdUpdate>();
         private ILogger _logger;
         private static ILogger _pendingLogger;
+
+        // Layout constants designed for a 512×512 surface; all values are scaled at render time.
+        private const float BASE   = 512f;
+        private const float PAD    = 10f;
+        private const float ROW_H  = 26f;
+        private const float BAR_H  = 13f;
+        private const float ICON_SZ = 22f;
 
         private LcdManager()
         {
@@ -30,9 +37,7 @@ namespace InventoryManagerLight
         {
             _pendingLogger = logger;
             if (logger != null && _lazy.IsValueCreated)
-            {
                 _lazy.Value.SetLogger(logger);
-            }
         }
 
         private void SetLogger(ILogger logger)
@@ -40,12 +45,20 @@ namespace InventoryManagerLight
             _logger = logger ?? new DefaultLogger();
         }
 
-        public void EnqueueUpdate(long lcdEntityId, string text, bool isAlert = false)
+#if TORCH
+        internal void EnqueueUpdate(long lcdEntityId, LcdSpriteRow[] rows, bool isAlert = false)
         {
-            if (string.IsNullOrEmpty(text)) return;
-            _queue.Enqueue(new LcdUpdate { EntityId = lcdEntityId, Text = text, IsAlert = isAlert });
-            _logger?.Debug($"Enqueued LCD update for {lcdEntityId} len={text.Length} alert={isAlert}");
+            if (rows == null || rows.Length == 0) return;
+            _queue.Enqueue(new LcdUpdate { EntityId = lcdEntityId, Rows = rows, IsAlert = isAlert });
+            _logger?.Debug($"Enqueued LCD update for {lcdEntityId} rows={rows.Length} alert={isAlert}");
         }
+#else
+        internal void EnqueueUpdate(long lcdEntityId, string text, bool isAlert = false)
+        {
+            _queue.Enqueue(new LcdUpdate { EntityId = lcdEntityId, IsAlert = isAlert });
+            _logger?.Debug($"Enqueued LCD stub for {lcdEntityId}");
+        }
+#endif
 
         // Must be called on game thread
         public void ApplyPendingUpdates()
@@ -55,15 +68,103 @@ namespace InventoryManagerLight
             {
                 try
                 {
-                    var ent = MyAPIGateway.Entities.GetEntityById(upd.EntityId) as IMyEntity;
-                    var panel = ent as IMyTextPanel;
-                    if (panel == null) continue;
-                    panel.WriteText(upd.Text);
-                    // Always reset FontColor to white — SE multiplies the panel's FontColor by each
-                    // embedded 0xE100 colour char, so any non-white base tint corrupts the palette.
-                    // Alert state is communicated entirely through the embedded colour chars in the text.
-                    panel.FontColor = Color.White;
-                    _logger?.Debug($"LCD {upd.EntityId}: wrote {upd.Text?.Length ?? 0} chars alert={upd.IsAlert}");
+                    var ent     = MyAPIGateway.Entities.GetEntityById(upd.EntityId) as IMyEntity;
+                    var surface = ent as IMyTextSurface;
+                    if (surface == null) continue;
+
+                    surface.ContentType          = ContentType.SCRIPT;
+                    surface.BackgroundColor       = new Color(6, 6, 8); // TEXT_AND_IMAGE mode
+                    surface.ScriptBackgroundColor = new Color(6, 6, 8); // SCRIPT mode (this is the one that matters)
+
+                    var   size = surface.SurfaceSize;
+                    float sc   = size.X / BASE;
+                    float pad  = PAD    * sc;
+                    float rh   = ROW_H  * sc;
+                    float bh   = BAR_H  * sc;
+                    float iz   = ICON_SZ * sc;
+                    float x    = pad;
+                    float y    = pad;
+                    float w    = size.X - 2f * pad;
+
+                    using (var frame = surface.DrawFrame())
+                    {
+                        foreach (var row in upd.Rows)
+                        {
+                            switch (row.RowKind)
+                            {
+                                case LcdSpriteRow.Kind.Header:
+                                {
+                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.85f * sc, TextAlignment.LEFT);
+                                    s.Position = new Vector2(x, y);
+                                    frame.Add(s);
+                                    y += rh * 1.1f;
+                                    break;
+                                }
+                                case LcdSpriteRow.Kind.Separator:
+                                {
+                                    frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                        new Vector2(x + w / 2f, y + sc),
+                                        new Vector2(w, Math.Max(1f, 2f * sc)), new Color(55, 55, 60)));
+                                    y += 6f * sc;
+                                    break;
+                                }
+                                case LcdSpriteRow.Kind.Item:
+                                {
+                                    float tx = x;
+                                    if (row.IconSprite != null)
+                                    {
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, row.IconSprite,
+                                            new Vector2(x + iz / 2f, y + iz / 2f),
+                                            new Vector2(iz, iz), Color.White));
+                                        tx = x + iz + 4f * sc;
+                                    }
+                                    var ts = MySprite.CreateText(row.Text, "White", row.TextColor, 0.72f * sc, TextAlignment.LEFT);
+                                    ts.Position = new Vector2(tx, y);
+                                    frame.Add(ts);
+                                    if (row.ShowAlert)
+                                    {
+                                        var al = MySprite.CreateText("!", "White", new Color(255, 140, 0), 0.85f * sc, TextAlignment.RIGHT);
+                                        al.Position = new Vector2(x + w, y);
+                                        frame.Add(al);
+                                    }
+                                    y += rh;
+                                    break;
+                                }
+                                case LcdSpriteRow.Kind.Bar:
+                                {
+                                    float fill  = Math.Max(0f, Math.Min(1f, row.BarFill));
+                                    float fillW = fill * w;
+                                    if (fillW > 1f)
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                            new Vector2(x + fillW / 2f, y + bh / 2f),
+                                            new Vector2(fillW, bh), row.BarFillColor));
+                                    if (fillW < w - 1f)
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                            new Vector2(x + fillW + (w - fillW) / 2f, y + bh / 2f),
+                                            new Vector2(w - fillW, bh), new Color(35, 35, 40)));
+                                    y += bh + 4f * sc;
+                                    break;
+                                }
+                                case LcdSpriteRow.Kind.Stat:
+                                {
+                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.68f * sc, TextAlignment.LEFT);
+                                    s.Position = new Vector2(x, y);
+                                    frame.Add(s);
+                                    y += rh * 0.9f;
+                                    break;
+                                }
+                                case LcdSpriteRow.Kind.Footer:
+                                {
+                                    var s = MySprite.CreateText(row.Text, "White", new Color(110, 110, 115), 0.6f * sc, TextAlignment.LEFT);
+                                    s.Position = new Vector2(x, y);
+                                    frame.Add(s);
+                                    y += rh * 0.85f;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    _logger?.Debug($"LCD {upd.EntityId}: drew {upd.Rows.Length} rows alert={upd.IsAlert}");
                 }
                 catch (Exception ex)
                 {
@@ -73,7 +174,7 @@ namespace InventoryManagerLight
 #else
             while (_queue.TryDequeue(out var upd))
             {
-                _logger?.Debug($"Applying LCD update to {upd.EntityId} len={upd.Text?.Length ?? 0}");
+                _logger?.Debug($"Applying LCD update to {upd.EntityId}");
             }
 #endif
         }
@@ -81,8 +182,12 @@ namespace InventoryManagerLight
         private class LcdUpdate
         {
             public long EntityId;
-            public string Text;
             public bool IsAlert;
+#if TORCH
+            public LcdSpriteRow[] Rows;
+#else
+            public string Text;
+#endif
         }
     }
 }

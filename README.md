@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.3.0  
+> **Version:** 1.4.0  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -353,18 +353,23 @@ Auto-queuing runs every **`AssemblerScanIntervalTicks`** (default: 3 600 ticks �
 IML:LCD
 ```
 
-Turns a text panel into an IML status display. Shows all tracked categories with item counts, container counts, and progress bars (when `MinStockThresholds` are configured), plus running transfer stats.
+Turns a text panel into an IML status display. Panels render using SE's native **sprite/script API** — no mods required. Each panel gets a dark background, a cyan header, coloured progress bars, and per-row alert indicators.
 
-**Example output:**
+**Visual breakdown:**
+- **Header** — cyan `[IML Status]` / `[IML: INGOTS]` title
+- **Item rows** — white item name and count; category-filtered panels include the item's in-game inventory icon as a small thumbnail
+- **Progress bar** — solid filled bar: green when healthy, amber when below threshold
+- **Alert indicator** — amber `!` drawn only on the low-stock row, not the whole panel
+- **Footer** — dimmed `Moved / Ops` transfer stats
+- **Background** — near-black, set automatically; no manual panel slider adjustment needed
+
+#### Status LCD (all categories)
+
 ```
-[IML Status]
-INGOTS (2 boxes) [!]
-  [████░░░░░░] 1,234/5,000 25%
-COMPONENTS (3 boxes)
-  [████████░░] 8,456/10,000 85%
-ORE (1 box)  45,678
-Moved:12,345 Ops:678
+IML:LCD
 ```
+
+Shows all tracked categories with container counts, progress bars (when `MinStockThresholds` are configured), and transfer stats.
 
 #### Category-filtered LCD
 
@@ -372,18 +377,7 @@ Moved:12,345 Ops:678
 IML:LCD=INGOTS
 ```
 
-Shows only that category — each subtype with its quantity, sorted by amount descending, with a total and progress bar at the bottom.
-
-**Example output:**
-```
-[IML: INGOTS]
-  Iron  4,500
-  Nickel  1,200
-  Gold  100
-─────────────────────
-Total: 5,800 [!]
-  [████████░░] 5,800/10,000 58%
-```
+Shows only that category — each subtype listed with its in-game icon thumbnail and quantity, sorted by amount descending, with a separator, total line, and progress bar at the bottom. The `!` alert appears only on the total row when stock is low.
 
 Supported values: any built-in category (`INGOTS`, `ORE`, `COMPONENTS`, `TOOLS`, `AMMO`, `BOTTLES`, `FOOD`, `WEAPONS`, `MISC`) or any custom category name you've defined in `<CustomCategories>`.
 
@@ -395,20 +389,7 @@ IML:LCD=SUMMARY
 
 Shows every category that has a `MinStockThresholds` entry, sorted by worst deficit first (lowest stock ratio at the top). Categories without a threshold follow, sorted by item count. Useful as an at-a-glance "anything critical?" panel.
 
-**Example output:**
-```
-[IML Summary]
-INGOTS [!]
-  [████░░░░░░] 1,234/5,000 25%
-TOOLS [!]
-  [█████░░░░░] 890/2,000 45%
-COMPONENTS
-  [████████░░] 8,456/10,000 85%
-ORE  45,678
-Moved:12,345 Ops:678
-```
-
-LCDs refresh every **LcdUpdateIntervalTicks** (default: 300 ticks ≈ 5 seconds). The font colour turns **orange** on any panel where at least one category is below its threshold, and returns to white when all thresholds are satisfied.
+LCDs refresh every **LcdUpdateIntervalTicks** (default: 300 ticks ≈ 5 seconds).
 
 ---
 
@@ -645,6 +626,15 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.4.0
+- **Sprite-based LCD rendering:** All IML LCD panels now use SE's `ContentType.SCRIPT` sprite API instead of `WriteText`. No mod dependency — this is vanilla SE.
+  - **Item icons:** Category-filtered panels (`IML:LCD=INGOTS` etc.) show each item's in-game inventory icon as a small thumbnail next to its name.
+  - **Per-element colour:** The alert `!` is drawn amber only on the affected row. The rest of the panel stays white. Previously the whole panel's font colour changed.
+  - **Solid progress bars:** Filled portion is green (healthy) or amber (low stock); empty portion is dark grey. Replaces Unicode block-character bars.
+  - **Cyan header:** The `[IML: CATEGORY]` title line is always cyan regardless of alert state.
+  - **Dark background:** `ScriptBackgroundColor` is set to near-black automatically on every update — no manual slider adjustment needed when placing a new panel.
+- **`TypeId/SubtypeId` sprite key:** The internal scan loop now stores the full item type path (e.g. `MyObjectBuilder_Ingot/Iron`) as the subtype key, which doubles as the SE sprite name for icon rendering. Display names strip the TypeId prefix so item names appear unchanged on screen.
 
 ### v1.3.0
 - **`OnCustomActionGetter` allocation fix:** Removed a debug log call that allocated a new logger object and string-interpolated a block ID on every terminal action list request. This handler fires server-side whenever any client opens a terminal screen, so on an active server it could run thousands of times per minute with no benefit.

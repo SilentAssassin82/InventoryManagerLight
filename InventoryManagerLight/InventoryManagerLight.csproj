@@ -104,6 +104,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Assembler\AssemblerManager.cs" />
+    <Compile Include="Display\LcdSpriteRow.cs" />
     <Compile Include="Sorting\CategoryResolver.cs" />
     <Compile Include="Config\ConfigManager.cs" />
     <Compile Include="Scanning\ConsumerScanner.cs" />

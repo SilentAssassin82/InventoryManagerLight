@@ -13,6 +13,7 @@ using VRage.ModAPI;
 using VRage.Game;
 using VRage.Game.ModAPI;
 using VRage.Game.ModAPI.Ingame;
+using VRageMath;
 #endif
 
 namespace InventoryManagerLight
@@ -468,7 +469,8 @@ namespace InventoryManagerLight
                                 {
                                     int amt = it.Amount.ToIntSafe();
                                     containerItems += amt;
-                                    var sub = it.Type.SubtypeId;
+                                    // Store "TypeId/SubtypeId" as key so it doubles as the LCD sprite name.
+                                    var sub = it.Type.TypeId + "/" + it.Type.SubtypeId;
                                     int prevSub; containerSubtypes.TryGetValue(sub, out prevSub);
                                     containerSubtypes[sub] = prevSub + amt;
                                 }
@@ -496,8 +498,8 @@ namespace InventoryManagerLight
                 try
                 {
                     bool isAlert;
-                    var text = BuildLcdContent(catContainers, catItems, catSubtypeTotals, panel.filter, out isAlert);
-                    LcdManager.Instance.EnqueueUpdate(panel.entityId, text, isAlert);
+                    var rows = BuildLcdContent(catContainers, catItems, catSubtypeTotals, panel.filter, out isAlert);
+                    LcdManager.Instance.EnqueueUpdate(panel.entityId, rows, isAlert);
                 }
                 catch { }
             }
@@ -540,43 +542,20 @@ namespace InventoryManagerLight
             return null;
         }
 
-        // Returns a Unicode block-character progress bar.
-        // Example: ProgressBar(3, 10, 10) => "[███░░░░░░░]"
-        private static string ProgressBar(int current, int max, int width = 10)
-        {
-            if (max <= 0) return string.Empty;
-            double ratio = Math.Min(1.0, (double)current / max);
-            int filled = (int)Math.Round(ratio * width);
-            return "[" + new string('█', filled) + new string('░', width - filled) + "]";
-        }
-
-        // Returns a single 0xE100-palette colour character (r, g, b each 0-7).
-        private static char Clr(int r, int g, int b) => (char)(0xE100 + (r << 6) + (g << 3) + b);
-
-        // Appends a solid-colour-block progress bar (CCTV pixel-art style) directly into sb.
-        // Every segment IS a 0xE100 colour char: filled = bright amber/green, empty = pure black.
-        // Each char renders as a coloured square on the SE LCD — together they form a solid bar.
-        // Caller must append a colour-reset char after this before rendering any text.
-        private static void AppendColourBar(System.Text.StringBuilder sb, int current, int max, bool isLow, int width = 24)
-        {
-            char cEmpty = Clr(0, 0, 0);  // pure black — maximum contrast with filled segments
-            if (max <= 0) { for (int i = 0; i < width; i++) sb.Append(cEmpty); return; }
-            double ratio  = Math.Min(1.0, (double)current / max);
-            int    filled = (int)Math.Round(ratio * width);
-            char   cFill  = isLow ? Clr(7, 4, 0) : Clr(2, 7, 2);  // amber : bright green
-            for (int i = 0;      i < filled; i++) sb.Append(cFill);
-            for (int i = filled; i < width;  i++) sb.Append(cEmpty);
-        }
-
-        private string BuildLcdContent(Dictionary<string, int> catContainers, Dictionary<string, int> catItems, Dictionary<string, Dictionary<string, int>> catSubtypeTotals, string filter, out bool isAlert)
+        private LcdSpriteRow[] BuildLcdContent(Dictionary<string, int> catContainers, Dictionary<string, int> catItems, Dictionary<string, Dictionary<string, int>> catSubtypeTotals, string filter, out bool isAlert)
         {
             isAlert = false;
-            var sb = new System.Text.StringBuilder();
+            var rows  = new List<LcdSpriteRow>();
+            var cyan  = new Color(0, 200, 255);
+            var green = new Color(0, 180, 60);
+            var amber = new Color(255, 140, 0);
+            var white = Color.White;
 
             if (string.Equals(filter, "SUMMARY", StringComparison.OrdinalIgnoreCase))
             {
                 // SUMMARY: categories sorted by worst deficit first, then no-threshold categories by item count.
-                sb.AppendLine("[IML Summary]");
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Header,    Text = "[IML Summary]", TextColor = cyan });
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
                 var withThreshold    = new List<string>();
                 var withoutThreshold = new List<string>();
                 foreach (var cat in catContainers.Keys)
@@ -607,21 +586,24 @@ namespace InventoryManagerLight
                     int threshold; _config.MinStockThresholds.TryGetValue(cat, out threshold);
                     bool isLow = total < threshold;
                     if (isLow) isAlert = true;
-                    sb.AppendLine(isLow ? $"{cat} [!]" : cat);
+                    float fill = threshold > 0 ? (float)Math.Min(1.0, (double)total / threshold) : 1f;
                     int pct = threshold > 0 ? (int)Math.Round((double)total / threshold * 100) : 100;
-                    AppendColourBar(sb, total, threshold, isLow); sb.AppendLine();
-                    sb.AppendLine($" {total.ToString("N0")}/{threshold.ToString("N0")} {pct}%");
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = cat,                                 TextColor = white, ShowAlert = isLow });
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Bar,  BarFill = fill,                             BarFillColor = isLow ? amber : green });
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {pct}%  {total:N0}/{threshold:N0}", TextColor = white });
                 }
                 foreach (var cat in withoutThreshold)
                 {
                     int total = 0; catItems.TryGetValue(cat, out total);
-                    sb.AppendLine($"{cat}  {total.ToString("N0")}");
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = $"{cat}  {total:N0}", TextColor = white });
                 }
-                sb.Append($"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}");
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer,   Text = $"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}" });
             }
             else if (string.IsNullOrEmpty(filter))
             {
-                sb.AppendLine("[IML Status]");
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Header,    Text = "[IML Status]", TextColor = cyan });
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
                 foreach (var cat in catContainers.Keys)
                 {
                     int ctns  = catContainers[cat];
@@ -630,24 +612,27 @@ namespace InventoryManagerLight
                     bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold;
                     if (isLow) isAlert = true;
                     string boxes = ctns == 1 ? "1 box" : $"{ctns} boxes";
-                    sb.AppendLine(isLow ? $"{cat} ({boxes}) [!]" : $"{cat} ({boxes})");
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = $"{cat} ({boxes})", TextColor = white, ShowAlert = isLow });
                     if (threshold > 0)
                     {
+                        float fill = (float)Math.Min(1.0, (double)total / threshold);
                         int pct = (int)Math.Round((double)total / threshold * 100);
-                        AppendColourBar(sb, total, threshold, isLow); sb.AppendLine();
-                        sb.AppendLine($" {total.ToString("N0")}/{threshold.ToString("N0")} {pct}%");
+                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Bar,  BarFill = fill,                             BarFillColor = isLow ? amber : green });
+                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {pct}%  {total:N0}/{threshold:N0}", TextColor = white });
                     }
                     else
                     {
-                        sb.AppendLine($"  {total.ToString("N0")}");
+                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $"  {total:N0}", TextColor = white });
                     }
                 }
-                sb.Append($"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}");
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer,   Text = $"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}" });
             }
             else
             {
-                sb.AppendLine($"[IML: {filter}]");
-                sb.AppendLine();
+                // DETAIL: per-subtype items with icons, category bar + threshold summary.
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Header,    Text = $"[IML: {filter}]", TextColor = cyan });
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
                 Dictionary<string, int> subtypeMap;
                 catSubtypeTotals.TryGetValue(filter, out subtypeMap);
                 if (subtypeMap != null && subtypeMap.Count > 0)
@@ -656,29 +641,39 @@ namespace InventoryManagerLight
                     sorted.Sort((a, b) => b.Value.CompareTo(a.Value));
                     foreach (var kv in sorted)
                     {
-                        sb.AppendLine($"  {kv.Key}  {kv.Value.ToString("N0")}");
+                        // kv.Key is "MyObjectBuilder_Ingot/Iron" — strip TypeId prefix for the display name
+                        int slash = kv.Key.IndexOf('/');
+                        var displayName = slash >= 0 ? kv.Key.Substring(slash + 1) : kv.Key;
+                        rows.Add(new LcdSpriteRow
+                        {
+                            RowKind    = LcdSpriteRow.Kind.Item,
+                            IconSprite = kv.Key,
+                            Text       = $"{displayName}  {kv.Value:N0}",
+                            TextColor  = white,
+                        });
                     }
                     int total = 0; foreach (var kv in subtypeMap) total += kv.Value;
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(filter, out threshold) && total < threshold;
                     if (isLow) isAlert = true;
-                    sb.AppendLine(new string('─', 17));
-                    sb.AppendLine(isLow ? $"Total: {total.ToString("N0")} [!]" : $"Total: {total.ToString("N0")}");
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = $"Total: {total:N0}", TextColor = white, ShowAlert = isLow });
                     if (threshold > 0)
                     {
+                        float fill = (float)Math.Min(1.0, (double)total / threshold);
                         int pct = (int)Math.Round((double)total / threshold * 100);
-                        AppendColourBar(sb, total, threshold, isLow); sb.AppendLine();
-                        sb.Append($" {total.ToString("N0")}/{threshold.ToString("N0")} {pct}%");
+                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Bar,  BarFill = fill,                             BarFillColor = isLow ? amber : green });
+                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {pct}%  {total:N0}/{threshold:N0}", TextColor = white });
                     }
                 }
                 else
                 {
                     int ctns = 0; catContainers.TryGetValue(filter, out ctns);
-                    sb.AppendLine($" {ctns} container(s)");
-                    sb.Append(" (empty)");
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {ctns} container(s)  (empty)", TextColor = white });
                 }
+                rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer, Text = $"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}" });
             }
-            return sb.ToString().TrimEnd();
+            return rows.ToArray();
         }
 #endif
 

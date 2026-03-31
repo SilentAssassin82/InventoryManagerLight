@@ -91,6 +91,7 @@ namespace InventoryManagerLight
                             case LcdSpriteRow.Kind.Bar:       neededH += BAR_H + 4f;     break;
                             case LcdSpriteRow.Kind.Stat:      neededH += ROW_H * 0.9f;  break;
                             case LcdSpriteRow.Kind.Footer:    neededH += ROW_H * 0.85f; break;
+                            case LcdSpriteRow.Kind.ItemBar:   neededH += ROW_H * 1.15f; break;
                         }
                     }
                     float availH = size.Y / sc - PAD;
@@ -161,6 +162,50 @@ namespace InventoryManagerLight
                                             new Vector2(x + fillW + (w - fillW) / 2f, y + bh / 2f),
                                             new Vector2(w - fillW, bh), new Color(35, 35, 40)));
                                     y += bh + 4f * sc * fs;
+                                    break;
+                                }
+                                case LcdSpriteRow.Kind.ItemBar:
+                                {
+                                    // Single combined row: dark bar background with fill, name left, stat right.
+                                    float rowH = rh * 1.15f;
+                                    float fill  = Math.Max(0f, Math.Min(1f, row.BarFill));
+                                    float fillW = fill * w;
+                                    // Darken fill colour so white text stays readable over it
+                                    var fc = row.BarFillColor;
+                                    var fillColor = new Color((int)(fc.R * 0.45f), (int)(fc.G * 0.45f), (int)(fc.B * 0.45f));
+                                    // Background track
+                                    frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                        new Vector2(x + w / 2f, y + rowH / 2f),
+                                        new Vector2(w, rowH), new Color(30, 30, 35)));
+                                    // Fill
+                                    if (fillW > 1f)
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                            new Vector2(x + fillW / 2f, y + rowH / 2f),
+                                            new Vector2(fillW, rowH), fillColor));
+                                    // Icon
+                                    float tx = x + 5f * sc * fs;
+                                    if (row.IconSprite != null)
+                                    {
+                                        float isz = iz * 0.85f;
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, row.IconSprite,
+                                            new Vector2(x + isz / 2f + 3f * sc * fs, y + rowH / 2f),
+                                            new Vector2(isz, isz), Color.White));
+                                        tx = x + isz + 7f * sc * fs;
+                                    }
+                                    float ty = y + rowH * 0.12f;
+                                    // Left text
+                                    var nameColor = row.ShowAlert ? new Color(255, 160, 0) : Color.White;
+                                    var lt = MySprite.CreateText(row.Text ?? "", "White", nameColor, 0.68f * sc * fs, TextAlignment.LEFT);
+                                    lt.Position = new Vector2(tx, ty);
+                                    frame.Add(lt);
+                                    // Right stat text
+                                    if (row.StatText != null)
+                                    {
+                                        var rt = MySprite.CreateText(row.StatText, "White", Color.White, 0.65f * sc * fs, TextAlignment.RIGHT);
+                                        rt.Position = new Vector2(x + w - 4f * sc * fs, ty);
+                                        frame.Add(rt);
+                                    }
+                                    y += rowH + 2f * sc * fs;
                                     break;
                                 }
                                 case LcdSpriteRow.Kind.Stat:

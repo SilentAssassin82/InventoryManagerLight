@@ -7,15 +7,16 @@ namespace InventoryManagerLight
     // Built on the scan/game thread; coordinates are computed by LcdManager on the game thread.
     internal struct LcdSpriteRow
     {
-        public enum Kind { Header, Separator, Item, Bar, Stat, Footer }
+        public enum Kind { Header, Separator, Item, Bar, Stat, Footer, ItemBar }
 
         public Kind   RowKind;
-        public string Text;         // display text (null = no text)
+        public string Text;         // left-side display text (null = no text)
+        public string StatText;     // right-side stat text for ItemBar rows (e.g. "10%  192/2,000")
         public string IconSprite;   // "MyObjectBuilder_Ingot/Iron" or null
         public Color  TextColor;
-        public bool   ShowAlert;    // render amber "!" at right edge of this row
-        public float  BarFill;      // 0-1 fill fraction, only used when RowKind == Bar
-        public Color  BarFillColor; // filled-portion colour, only used when RowKind == Bar
+        public bool   ShowAlert;    // render amber text / amber bar fill when true
+        public float  BarFill;      // 0-1 fill fraction (Bar and ItemBar rows)
+        public Color  BarFillColor; // filled-portion colour (Bar and ItemBar rows)
     }
 }
 #endif

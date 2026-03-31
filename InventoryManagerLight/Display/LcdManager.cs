@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 #if TORCH
 using Sandbox.ModAPI;
 using VRage.ModAPI;
@@ -81,21 +82,17 @@ namespace InventoryManagerLight
 
                     // Measure total content height (in BASE units) to compute shrink-to-fit factor
                     float neededH = 0f;
-                    foreach (var r in upd.Rows)
-                    {
-                        switch (r.RowKind)
-                        {
-                            case LcdSpriteRow.Kind.Header:    neededH += ROW_H * 1.1f;  break;
-                            case LcdSpriteRow.Kind.Separator: neededH += 6f;             break;
-                            case LcdSpriteRow.Kind.Item:      neededH += ROW_H;          break;
-                            case LcdSpriteRow.Kind.Bar:       neededH += BAR_H + 4f;     break;
-                            case LcdSpriteRow.Kind.Stat:      neededH += ROW_H * 0.9f;  break;
-                            case LcdSpriteRow.Kind.Footer:    neededH += ROW_H * 0.85f; break;
-                            case LcdSpriteRow.Kind.ItemBar:   neededH += ROW_H * 1.15f; break;
-                        }
-                    }
+                    foreach (var r in upd.Rows) neededH += GetRowHeightBase(r.RowKind);
                     float availH = size.Y / sc - PAD;
                     float fs     = availH < neededH ? Math.Max(0.4f, availH / neededH) : 1.0f;
+
+                    // When shrink-to-fit would make content unreadably small, page instead.
+                    var rowsToRender = upd.Rows;
+                    if (fs < PAGE_FS_THRESHOLD)
+                    {
+                        fs           = 1.0f;
+                        rowsToRender = GetPageRows(upd.EntityId, upd.Rows, availH);
+                    }
 
                     float pad  = PAD     * sc * fs;
                     float rh   = ROW_H   * sc * fs;
@@ -107,7 +104,7 @@ namespace InventoryManagerLight
 
                     using (var frame = surface.DrawFrame())
                     {
-                        foreach (var row in upd.Rows)
+                        foreach (var row in rowsToRender)
                         {
                             switch (row.RowKind)
                             {
@@ -267,5 +264,118 @@ namespace InventoryManagerLight
             public string Text;
 #endif
         }
+
+#if TORCH
+        // When shrink-to-fit would scale below this factor, paginate instead.
+        private const float  PAGE_FS_THRESHOLD  = 0.65f;
+        // Seconds each page is shown before advancing to the next.
+        private const double PAGE_INTERVAL_SECS = 8.0;
+        private readonly Dictionary<long, PageState> _pageStates = new Dictionary<long, PageState>();
+
+        private class PageState
+        {
+            public int      PageIndex;
+            public DateTime LastFlip;
+            public PageState() { LastFlip = DateTime.UtcNow; }
+        }
+
+        // Returns the BASE-unit height contributed by a single row of the given kind.
+        // Must stay in sync with the ItemBar/Header/etc. layout constants.
+        private static float GetRowHeightBase(LcdSpriteRow.Kind k)
+        {
+            switch (k)
+            {
+                case LcdSpriteRow.Kind.Header:    return ROW_H * 1.1f;
+                case LcdSpriteRow.Kind.Separator: return 6f;
+                case LcdSpriteRow.Kind.Item:      return ROW_H;
+                case LcdSpriteRow.Kind.Bar:       return BAR_H + 4f;
+                case LcdSpriteRow.Kind.Stat:      return ROW_H * 0.9f;
+                case LcdSpriteRow.Kind.Footer:    return ROW_H * 0.85f;
+                case LcdSpriteRow.Kind.ItemBar:   return ROW_H * 1.15f;
+                default:                          return ROW_H;
+            }
+        }
+
+        // Splits rows into pages that each fit within availH (BASE units) at fs=1.
+        // Header/Separator prefix and Footer suffix are pinned on every page.
+        // The page index advances every PAGE_INTERVAL_SECS seconds.
+        // Returns the rows to render for the current page, with "n/total" appended to
+        // the Header text so the player knows more pages exist.
+        private LcdSpriteRow[] GetPageRows(long entityId, LcdSpriteRow[] rows, float availH)
+        {
+            // Pinned prefix: leading Header and Separator rows shown on every page.
+            int prefixEnd = 0;
+            while (prefixEnd < rows.Length &&
+                   (rows[prefixEnd].RowKind == LcdSpriteRow.Kind.Header ||
+                    rows[prefixEnd].RowKind == LcdSpriteRow.Kind.Separator))
+                prefixEnd++;
+
+            // Pinned suffix: trailing Footer rows shown on every page.
+            int suffixStart = rows.Length;
+            while (suffixStart > prefixEnd &&
+                   rows[suffixStart - 1].RowKind == LcdSpriteRow.Kind.Footer)
+                suffixStart--;
+
+            // Height budget available for paginated content on each page.
+            float pinnedH = 0f;
+            for (int i = 0; i < prefixEnd; i++)          pinnedH += GetRowHeightBase(rows[i].RowKind);
+            for (int i = suffixStart; i < rows.Length; i++) pinnedH += GetRowHeightBase(rows[i].RowKind);
+            float contentAvailH = availH - pinnedH;
+            if (contentAvailH <= 0f) return rows;
+
+            // Split content rows into pages.
+            var pages = new List<List<int>>();
+            int ci = prefixEnd;
+            while (ci < suffixStart)
+            {
+                float pageH = 0f;
+                var page = new List<int>();
+                while (ci < suffixStart)
+                {
+                    float rowH = GetRowHeightBase(rows[ci].RowKind);
+                    if (pageH + rowH > contentAvailH && page.Count > 0) break;
+                    pageH += rowH;
+                    page.Add(ci++);
+                }
+                pages.Add(page);
+            }
+
+            int totalPages = pages.Count;
+            if (totalPages <= 1) return rows;
+
+            // Advance page index on a timer.
+            PageState ps;
+            if (!_pageStates.TryGetValue(entityId, out ps))
+            {
+                ps = new PageState();
+                _pageStates[entityId] = ps;
+            }
+            if ((DateTime.UtcNow - ps.LastFlip).TotalSeconds >= PAGE_INTERVAL_SECS)
+            {
+                ps.PageIndex = (ps.PageIndex + 1) % totalPages;
+                ps.LastFlip  = DateTime.UtcNow;
+            }
+            int currentPage = ps.PageIndex % totalPages;
+
+            // Assemble: prefix (header gets "n/total" appended) + page content + suffix.
+            var result = new List<LcdSpriteRow>();
+            for (int i = 0; i < prefixEnd; i++)
+            {
+                if (rows[i].RowKind == LcdSpriteRow.Kind.Header)
+                {
+                    var r = rows[i];
+                    r.Text = $"{r.Text}  {currentPage + 1}/{totalPages}";
+                    result.Add(r);
+                }
+                else
+                {
+                    result.Add(rows[i]);
+                }
+            }
+            foreach (var idx in pages[currentPage]) result.Add(rows[idx]);
+            for (int i = suffixStart; i < rows.Length; i++) result.Add(rows[i]);
+            return result.ToArray();
+        }
+#endif
     }
 }

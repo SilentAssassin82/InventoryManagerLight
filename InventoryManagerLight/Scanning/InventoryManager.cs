@@ -698,18 +698,12 @@ namespace InventoryManagerLight
                         rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $"  {total:N0}", TextColor = white });
                     }
                 }
+                // Subtype thresholds don't render rows here — drill into [IML:LCD=CATEGORY] to see them.
+                // Still drive isAlert so the LCD header flashes when any subtype is low.
                 foreach (var kv in _config.MinStockThresholds)
                 {
-                    if (catContainers.ContainsKey(kv.Key)) continue; // already rendered as a category
-                    int total = GetSubtypeTotal(catSubtypeTotals, kv.Key);
-                    int threshold = kv.Value;
-                    bool isLow = total < threshold;
-                    if (isLow) isAlert = true;
-                    float fill = threshold > 0 ? (float)Math.Min(1.0, (double)total / threshold) : 1f;
-                    int pct = threshold > 0 ? (int)Math.Round((double)total / threshold * 100) : 100;
-                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = kv.Key, TextColor = white, ShowAlert = isLow });
-                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Bar,  BarFill = fill, BarFillColor = isLow ? amber : green });
-                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {pct}%  {total:N0}/{threshold:N0}", TextColor = white });
+                    if (catContainers.ContainsKey(kv.Key)) continue;
+                    if (GetSubtypeTotal(catSubtypeTotals, kv.Key) < kv.Value) isAlert = true;
                 }
                 rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
                 rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer,   Text = $"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}" });
@@ -765,6 +759,13 @@ namespace InventoryManagerLight
                             TextColor  = white,
                             ShowAlert  = subtypeLow,
                         });
+                        if (subtypeThreshold > 0)
+                        {
+                            float subFill = (float)Math.Min(1.0, (double)kv.Value / subtypeThreshold);
+                            int subPct = (int)Math.Round((double)kv.Value / subtypeThreshold * 100);
+                            rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Bar,  BarFill = subFill, BarFillColor = subtypeLow ? amber : green });
+                            rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {subPct}%  {kv.Value:N0}/{subtypeThreshold:N0}", TextColor = white });
+                        }
                     }
                     int total = 0; foreach (var kv in subtypeMap) total += kv.Value;
                     int threshold;

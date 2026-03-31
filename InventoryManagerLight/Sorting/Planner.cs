@@ -443,6 +443,43 @@ namespace InventoryManagerLight
                         if (belongs && containerAllowSubtypes.TryGetValue(srcId, out allowSet) && !allowSet.Contains(subtype))
                             belongs = false;
                     }
+                    // Pull-to-specific: if item belongs here by category but a more-specific
+                    // container explicitly allows this subtype (and this container doesn't),
+                    // treat the item as misplaced so it migrates to the targeted container.
+                    if (belongs)
+                    {
+                        int si = itemStr.IndexOf('/');
+                        string subtype = si >= 0 ? itemStr.Substring(si + 1) : itemStr;
+                        HashSet<string> srcAllow;
+                        bool srcHasSpecificAllow = containerAllowSubtypes.TryGetValue(srcId, out srcAllow) && srcAllow.Contains(subtype);
+                        if (!srcHasSpecificAllow)
+                        {
+                            foreach (var other in containerCategories)
+                            {
+                                if (other.Key == srcId) continue;
+                                string oGroup = null;
+                                containerGroups.TryGetValue(other.Key, out oGroup);
+                                if (!string.IsNullOrEmpty(srcGroup) && !string.IsNullOrEmpty(oGroup)
+                                    && !string.Equals(srcGroup, oGroup, StringComparison.OrdinalIgnoreCase))
+                                    continue;
+                                HashSet<string> destAllow;
+                                if (!containerAllowSubtypes.TryGetValue(other.Key, out destAllow) || !destAllow.Contains(subtype))
+                                    continue;
+                                bool fitsCategory = false;
+                                foreach (var oCat in other.Value)
+                                    if (_categoryResolver != null && _categoryResolver.ItemMatchesCategory(itemDef, itemStr, oCat))
+                                    { fitsCategory = true; break; }
+                                if (!fitsCategory) continue;
+                                HashSet<string> destDeny;
+                                if (containerDenySubtypes.TryGetValue(other.Key, out destDeny) && destDeny.Contains(subtype)) continue;
+                                float fillLimit; if (!containerFillLimit.TryGetValue(other.Key, out fillLimit)) fillLimit = 1.0f;
+                                float currentFill; containerCurrentFill.TryGetValue(other.Key, out currentFill);
+                                if (currentFill >= fillLimit) continue;
+                                belongs = false;
+                                break;
+                            }
+                        }
+                    }
                     if (belongs) continue;
 
                     // Item is misplaced — find ALL managed containers that accept it.

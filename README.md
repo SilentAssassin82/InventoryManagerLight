@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.4.7  
+> **Version:** 1.4.8  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -540,7 +540,9 @@ Then run `!iml reload`. Per-assembler `IML:MIN=` tags in CustomData always take 
 
 ### Setting MinStockThresholds in the config file
 
-Add one `<Item>` per category inside `<MinStockThresholds>`:
+Add one `<Item>` per category **or per item subtype** inside `<MinStockThresholds>`.
+
+**Category-level keys** (built-in category names like `INGOTS`, `AMMO`):
 
 ```xml
 <ImlConfig>
@@ -552,9 +554,26 @@ Add one `<Item>` per category inside `<MinStockThresholds>`:
 </ImlConfig>
 ```
 
-Then run `!iml reload`. When a category's total item count drops below its threshold, `!iml status` flags it with `[!]` and LCD panels show the progress bar in a low-stock state.
+**Subtype-level keys** (exact SE SubtypeId, e.g. `Platinum`, `Gold`, `Iron`):
 
-> **Low-stock fast rescan:** When any threshold-tracked category is below its limit, the next sort fires at `LowStockSortIntervalTicks` (default ≈ 20 sec) instead of waiting for the full `AutoSortIntervalTicks` cycle. This means ammo and other critical items re-stock much faster without reducing the global sort interval for everything else.
+```xml
+<ImlConfig>
+  <MinStockThresholds>
+    <Item key="INGOTS" value="5000" />
+    <Item key="Platinum" value="2000" />
+    <Item key="Gold" value="1000" />
+  </MinStockThresholds>
+</ImlConfig>
+```
+
+Both types can be mixed freely in the same section. Subtype keys use the item's SE SubtypeId (the part after the `/` in a definition id, e.g. `Iron`, `Nickel`, `Uranium`). Category keys take priority for their own total; subtype keys track that specific material independently.
+
+Then run `!iml reload`. When a category's **or subtype's** total item count drops below its threshold:
+- `!iml status` flags it with `[LOW: x/y]`
+- LCD panels show the progress bar in amber and a `[!]` marker
+- In the category detail view (`[IML:LCD=INGOTS]`) individual rows for that subtype also show `[!]`
+
+> **Low-stock fast rescan:** When any threshold-tracked category or subtype is below its limit, the next sort fires at `LowStockSortIntervalTicks` (default ≈ 20 sec) instead of waiting for the full `AutoSortIntervalTicks` cycle. This means ammo and other critical items re-stock much faster without reducing the global sort interval for everything else.
 
 ---
 
@@ -748,6 +767,9 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.4.8
+- **Per-subtype `MinStockThresholds`:** Category keys (`INGOTS`, `AMMO`) now co-exist with subtype keys (`Platinum`, `Gold`, `Uranium`) in the same `<MinStockThresholds>` section. When a subtype key is present, IML sums that specific material across all managed containers and triggers the same alerts — `[!]` on LCD panels, amber progress bar, `[LOW]` in `!iml status`, and the `LowStockSortIntervalTicks` fast-rescan — independently of the category total. In the category detail view (`[IML:LCD=INGOTS]`) each individual subtype row also shows `[!]` when that material is below its own threshold. Both key types can be freely mixed in the same config section.
 
 ### v1.4.7
 - **`IML:MIN=CONSUMERS[=N]` moves to weapon blocks:** Each weapon block now declares its own ammo requirement in its own CustomData (`IML:MIN=NATO_25x184mm:CONSUMERS=120`). IML sums all consumer contributions from blocks in the same conveyor group and adds that total **on top of** the assembler's fixed `IML:MIN=` base stockpile. Adding a turret automatically raises the effective target with no change to the assembler tag. Using `0` as the assembler base (`IML:MIN=NATO_25x184mm:0`) gives a pure consumer-driven target with no fixed buffer. The `!iml queueall` output shows the breakdown: `target=1,600 (1,000 + 600 consumers)`.

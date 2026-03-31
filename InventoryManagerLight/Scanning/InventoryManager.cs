@@ -540,9 +540,13 @@ namespace InventoryManagerLight
                 catch { }
             }
 
-            // Log a server-side warning for every category currently below its threshold (per group).
-            foreach (var groupItems in groupCatItems.Values)
+            // Log a server-side warning for every category/subtype currently below its threshold (per group).
+            foreach (var groupKey in groupCatItems.Keys)
             {
+                var groupItems = groupCatItems[groupKey];
+                Dictionary<string, Dictionary<string, int>> groupSubtypes;
+                groupCatSubtypeTotals.TryGetValue(groupKey, out groupSubtypes);
+
                 foreach (var cat in groupItems.Keys)
                 {
                     int total; groupItems.TryGetValue(cat, out total);
@@ -551,6 +555,20 @@ namespace InventoryManagerLight
                     {
                         _logger?.Warn($"IML: Low stock — {cat}: {total:N0}/{threshold:N0}");
                         _lowStockDetected = true;
+                    }
+                }
+
+                if (groupSubtypes != null)
+                {
+                    foreach (var kv in _config.MinStockThresholds)
+                    {
+                        if (groupItems.ContainsKey(kv.Key)) continue; // already handled as category
+                        int total = GetSubtypeTotal(groupSubtypes, kv.Key);
+                        if (total < kv.Value)
+                        {
+                            _logger?.Warn($"IML: Low stock — {kv.Key}: {total:N0}/{kv.Value:N0}");
+                            _lowStockDetected = true;
+                        }
                     }
                 }
             }
@@ -639,6 +657,19 @@ namespace InventoryManagerLight
                     int total = 0; catItems.TryGetValue(cat, out total);
                     rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = $"{cat}  {total:N0}", TextColor = white });
                 }
+                foreach (var kv in _config.MinStockThresholds)
+                {
+                    if (catContainers.ContainsKey(kv.Key)) continue; // already rendered as a category
+                    int total = GetSubtypeTotal(catSubtypeTotals, kv.Key);
+                    int threshold = kv.Value;
+                    bool isLow = total < threshold;
+                    if (isLow) isAlert = true;
+                    float fill = threshold > 0 ? (float)Math.Min(1.0, (double)total / threshold) : 1f;
+                    int pct = threshold > 0 ? (int)Math.Round((double)total / threshold * 100) : 100;
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = kv.Key, TextColor = white, ShowAlert = isLow });
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Bar,  BarFill = fill, BarFillColor = isLow ? amber : green });
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {pct}%  {total:N0}/{threshold:N0}", TextColor = white });
+                }
                 rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
                 rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer,   Text = $"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}" });
             }
@@ -666,6 +697,19 @@ namespace InventoryManagerLight
                     {
                         rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $"  {total:N0}", TextColor = white });
                     }
+                }
+                foreach (var kv in _config.MinStockThresholds)
+                {
+                    if (catContainers.ContainsKey(kv.Key)) continue; // already rendered as a category
+                    int total = GetSubtypeTotal(catSubtypeTotals, kv.Key);
+                    int threshold = kv.Value;
+                    bool isLow = total < threshold;
+                    if (isLow) isAlert = true;
+                    float fill = threshold > 0 ? (float)Math.Min(1.0, (double)total / threshold) : 1f;
+                    int pct = threshold > 0 ? (int)Math.Round((double)total / threshold * 100) : 100;
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = kv.Key, TextColor = white, ShowAlert = isLow });
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Bar,  BarFill = fill, BarFillColor = isLow ? amber : green });
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $" {pct}%  {total:N0}/{threshold:N0}", TextColor = white });
                 }
                 rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Separator });
                 rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer,   Text = $"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}" });
@@ -710,12 +754,16 @@ namespace InventoryManagerLight
                         {
                             displayName = subtype;
                         }
+                        int subtypeThreshold;
+                        bool subtypeLow = _config.MinStockThresholds.TryGetValue(subtype, out subtypeThreshold) && kv.Value < subtypeThreshold;
+                        if (subtypeLow) isAlert = true;
                         rows.Add(new LcdSpriteRow
                         {
                             RowKind    = LcdSpriteRow.Kind.Item,
                             IconSprite = kv.Key,
                             Text       = $"{displayName}  {kv.Value:N0}",
                             TextColor  = white,
+                            ShowAlert  = subtypeLow,
                         });
                     }
                     int total = 0; foreach (var kv in subtypeMap) total += kv.Value;
@@ -740,6 +788,22 @@ namespace InventoryManagerLight
                 rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer, Text = $"Moved:{_applier.TotalItemsMoved:N0} Ops:{_applier.TotalOpsCompleted:N0}" });
             }
             return rows.ToArray();
+        }
+
+        // Returns the total item count for a given SubtypeId summed across all categories.
+        // catSubtypeTotals keys use "TypeId/SubtypeId" format; subtypeKey is just the SubtypeId portion.
+        private static int GetSubtypeTotal(Dictionary<string, Dictionary<string, int>> catSubtypeTotals, string subtypeKey)
+        {
+            int total = 0;
+            foreach (var catMap in catSubtypeTotals.Values)
+                foreach (var kv in catMap)
+                {
+                    int slash = kv.Key.IndexOf('/');
+                    var sn = slash >= 0 ? kv.Key.Substring(slash + 1) : kv.Key;
+                    if (string.Equals(sn, subtypeKey, StringComparison.OrdinalIgnoreCase))
+                        total += kv.Value;
+                }
+            return total;
         }
 #endif
 
@@ -939,8 +1003,9 @@ namespace InventoryManagerLight
             {
 #if TORCH
                 var catContainers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                var catItems     = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                var catLocked    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var catItems      = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var catLocked     = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var allSubtypes   = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var tb in GetAllTerminalBlocks())
                 {
@@ -964,7 +1029,13 @@ namespace InventoryManagerLight
                                     var items = new List<VRage.Game.ModAPI.Ingame.MyInventoryItem>();
                                     inv.GetItems(items);
                                     foreach (var it in items)
-                                        containerItems += it.Amount.ToIntSafe();
+                                    {
+                                        int amt = it.Amount.ToIntSafe();
+                                        containerItems += amt;
+                                        var sub = it.Type.TypeId + "/" + it.Type.SubtypeId;
+                                        int prevSub; allSubtypes.TryGetValue(sub, out prevSub);
+                                        allSubtypes[sub] = prevSub + amt;
+                                    }
                                 }
                                 catch { }
                             }
@@ -1006,6 +1077,26 @@ namespace InventoryManagerLight
                 }
                 if (lowCount > 0)
                     result.Add($"⚠ {lowCount} category/categories below minimum stock threshold.");
+
+                int subtypeLowCount = 0;
+                foreach (var kv in _config.MinStockThresholds)
+                {
+                    if (catContainers.ContainsKey(kv.Key)) continue; // already reported as category
+                    int total = 0;
+                    foreach (var sub in allSubtypes)
+                    {
+                        int slash = sub.Key.IndexOf('/');
+                        var sn = slash >= 0 ? sub.Key.Substring(slash + 1) : sub.Key;
+                        if (string.Equals(sn, kv.Key, StringComparison.OrdinalIgnoreCase))
+                            total += sub.Value;
+                    }
+                    bool isLow = total < kv.Value;
+                    if (isLow) subtypeLowCount++;
+                    var lowNote = isLow ? $"  [LOW: {total:N0}/{kv.Value:N0}]" : $"  {total:N0}/{kv.Value:N0}";
+                    result.Add($"{kv.Key,-12}   subtype threshold{lowNote}");
+                }
+                if (subtypeLowCount > 0)
+                    result.Add($"⚠ {subtypeLowCount} subtype(s) below minimum stock threshold.");
 #endif
             }
             catch { }

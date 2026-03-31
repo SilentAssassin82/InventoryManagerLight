@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.4.4  
+> **Version:** 1.4.6  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -252,6 +252,34 @@ Mixing single values and ranges on the same assembler is fine:
 IML:MIN=SteelPlate:500-2000
 IML:MIN=Motor:300
 IML:MIN=Computer:200-1000
+```
+
+#### Auto-scaling by weapon count: `CONSUMERS[=N]`
+
+```
+IML:MIN=NATO_25x184mm:CONSUMERS=120
+```
+
+Instead of a fixed number, `CONSUMERS=N` tells IML to count all weapon blocks in the same conveyor group and multiply by `N` (clips per weapon) to arrive at the effective target. When you add a turret, the target rises automatically — no manual `IML:MIN=` adjustment needed.
+
+- `CONSUMERS=120` — counts weapons × 120
+- `CONSUMERS` (no `=N`) — counts weapons × 100 (default)
+- The count includes: all turret types (`IMyLargeTurretBase`) plus fixed-weapon blocks (Gatling Gun, Missile Launcher, Automatic Rifle)
+- Only weapons **connected to the same conveyor group** as the assembler are counted
+- If no weapons are found in the group, the item is skipped for that scan pass (logged in `!iml queueall`)
+
+**Typical turret-defence setup:**
+```
+IML:MIN=NATO_25x184mm:CONSUMERS=120
+IML:MIN=AutocannonClip:CONSUMERS=60
+```
+
+This keeps enough magazines for every turret on the grid to hold a full load, scaling up the moment a new gun is placed and connected.
+
+**How it appears in `!iml queueall`:**
+```
+  FOUND 'Assembler' — targets: NATO_25x184mm:CONSUMERS=120
+    NATO_25x184mm: stock=480 queued=0 target=600 (5 guns × 120) — QUEUED 120
 ```
 
 #### Player-priority yield
@@ -708,6 +736,12 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.4.6
+- **`IML:MIN=CONSUMERS[=N]` — auto-scaling assembler targets by weapon count:** Instead of a fixed clip count, `CONSUMERS=N` counts all weapon blocks connected to the same conveyor group and multiplies by `N` to compute the effective minimum. Adding a turret automatically raises the production target — no manual `IML:MIN=` update required. All turret types (`IMyLargeTurretBase`) and common fixed-weapon blocks (Gatling Gun, Missile Launcher, Automatic Rifle) are counted. If no `=N` is specified, defaults to 100 clips per weapon. If no weapons are found in the group the item is skipped for that scan pass. The `!iml queueall` output shows the resolved target: `target=600 (5 guns × 120)`.
+
+### v1.4.5
+- **`IML:ALLOW=` pull-to-specific fix:** Items sitting in a general category container (e.g. `IML:AMMO`) were not being moved to a more-specific container (e.g. `IML:AMMO` + `IML:ALLOW=NATO_25x184mm`) because the item already had `belongs=true` at its current location. The planner now checks whether a more-specific destination — one with an explicit `ALLOW` for the item's subtype — exists, and if so overrides `belongs` to migrate the item there.
 
 ### v1.4.4
 - **Urgency mode — combat transfer prioritisation:** When a category's total stock in managed containers drops below a configured `UrgentStockThresholds` value, that category enters urgent mode. All transfer ops for urgent categories are sorted to the front of each plan batch ahead of low-priority items such as ore and ingots. On a PvP ship, ammo restocking happens immediately on the next planner pass without waiting for ingot/component moves to complete first. Urgency is detected every `ScannerIntervalTicks` (≈ 0.17 sec default) so depletion mid-fight is caught within seconds. When stock recovers the urgency flag clears automatically and normal scheduling resumes. An optional `ExcludeNonUrgentWhenUrgent` flag enables a hard pause — all non-urgent transfers are dropped from the batch entirely until urgency clears.

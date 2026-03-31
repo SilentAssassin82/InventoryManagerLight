@@ -607,7 +607,7 @@ namespace InventoryManagerLight
             isAlert = false;
             var rows  = new List<LcdSpriteRow>();
             var cyan  = new Color(0, 200, 255);
-            var green = new Color(0, 180, 60);
+            var green = new Color(100, 150, 200);
             var amber = new Color(255, 140, 0);
             var white = Color.White;
 

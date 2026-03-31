@@ -197,11 +197,11 @@ namespace InventoryManagerLight
                                     float fill  = Math.Max(0f, Math.Min(1f, row.BarFill));
                                     float fillW = fill * barW;
                                     var fc = row.BarFillColor;
-                                    var fillColor = new Color((int)(fc.R * 0.45f), (int)(fc.G * 0.45f), (int)(fc.B * 0.45f));
+                                    var fillColor = new Color((int)(fc.R * 0.45f), (int)(fc.G * 0.45f), (int)(fc.B * 0.45f), 200);
                                     // Background track
                                     frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
                                         new Vector2(halfX + barW / 2f, y + rowH / 2f),
-                                        new Vector2(barW, rowH), new Color(30, 30, 35)));
+                                        new Vector2(barW, rowH), new Color(30, 30, 35, 220)));
                                     // Fill
                                     if (fillW > 1f)
                                         frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",

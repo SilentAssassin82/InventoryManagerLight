@@ -140,7 +140,13 @@ namespace InventoryManagerLight
                                     var ts = MySprite.CreateText(row.Text, "White", row.TextColor, 0.72f * sc * fs, TextAlignment.LEFT);
                                     ts.Position = new Vector2(tx, y);
                                     frame.Add(ts);
-                                    if (row.ShowAlert)
+                                    if (row.StatText != null)
+                                    {
+                                        var st = MySprite.CreateText(row.StatText, "White", row.TextColor, 0.68f * sc * fs, TextAlignment.RIGHT);
+                                        st.Position = new Vector2(x + w, y);
+                                        frame.Add(st);
+                                    }
+                                    else if (row.ShowAlert)
                                     {
                                         var al = MySprite.CreateText("!", "White", new Color(255, 140, 0), 0.85f * sc * fs, TextAlignment.RIGHT);
                                         al.Position = new Vector2(x + w, y);

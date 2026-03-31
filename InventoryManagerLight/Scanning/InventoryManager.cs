@@ -681,17 +681,10 @@ namespace InventoryManagerLight
                     bool isLow = _config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold;
                     if (isLow) isAlert = true;
                     string boxes = ctns == 1 ? "1 box" : $"{ctns} boxes";
-                    if (threshold > 0)
-                    {
-                        float fill = (float)Math.Min(1.0, (double)total / threshold);
-                        int pct = (int)Math.Round((double)total / threshold * 100);
-                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.ItemBar, Text = $"{cat} ({boxes})", StatText = $"{pct}%  {total:N0}/{threshold:N0}", TextColor = white, ShowAlert = isLow, BarFill = fill, BarFillColor = isLow ? amber : green });
-                    }
-                    else
-                    {
-                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = $"{cat} ({boxes})", TextColor = white });
-                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Stat, Text = $"  {total:N0}", TextColor = white });
-                    }
+                    string stat  = threshold > 0
+                        ? $"{(int)Math.Round((double)total / threshold * 100)}%  {total:N0}/{threshold:N0}"
+                        : $"{total:N0}";
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = $"{cat} ({boxes})", StatText = stat, TextColor = isLow ? amber : white });
                 }
                 // Subtype thresholds don't render rows here — drill into [IML:LCD=CATEGORY] to see them.
                 // Still drive isAlert so the LCD header flashes when any subtype is low.

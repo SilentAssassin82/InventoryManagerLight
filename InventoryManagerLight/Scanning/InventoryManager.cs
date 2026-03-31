@@ -429,10 +429,12 @@ namespace InventoryManagerLight
         // find LCD panels tagged [IML:LCD] or [IML:LCD=CATEGORY], then write to each panel.
         private void UpdateLcdPanels()
         {
-            var catContainers    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var catItems         = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var catSubtypeTotals = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
-            var lcdPanels        = new List<(long entityId, string filter)>();
+            // Per-conveyor-group aggregates so each LCD only shows its own cluster's inventory.
+            // Two unconnected grids (even from the same player) are kept completely separate.
+            var groupCatContainers    = new Dictionary<long, Dictionary<string, int>>();
+            var groupCatItems         = new Dictionary<long, Dictionary<string, int>>();
+            var groupCatSubtypeTotals = new Dictionary<long, Dictionary<string, Dictionary<string, int>>>();
+            var lcdPanels             = new List<(long entityId, string filter, long groupKey)>();
 
             foreach (var tb in GetAllTerminalBlocks())
             {
@@ -447,7 +449,7 @@ namespace InventoryManagerLight
                     {
                         var filter = ParseLcdTag(name, cd);
                         if (filter != null)
-                            lcdPanels.Add((tb.EntityId, filter));
+                            lcdPanels.Add((tb.EntityId, filter, GetConveyorGroupKey(tb.CubeGrid)));
                         continue;
                     }
 
@@ -455,6 +457,7 @@ namespace InventoryManagerLight
                     var tag = ContainerMatcher.ParseContainerTag(name, cd, _config.ContainerTagPrefix);
                     if (tag.Categories != null && tag.Categories.Length > 0)
                     {
+                        var groupKey = GetConveyorGroupKey(tb.CubeGrid);
                         int containerItems = 0;
                         var containerSubtypes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                         for (int i = 0; i < tb.InventoryCount; i++)
@@ -477,6 +480,17 @@ namespace InventoryManagerLight
                             }
                             catch { }
                         }
+
+                        // Ensure per-group dicts exist for this group key
+                        Dictionary<string, int> catContainers, catItems;
+                        Dictionary<string, Dictionary<string, int>> catSubtypeTotals;
+                        if (!groupCatContainers.TryGetValue(groupKey, out catContainers))
+                        { catContainers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); groupCatContainers[groupKey] = catContainers; }
+                        if (!groupCatItems.TryGetValue(groupKey, out catItems))
+                        { catItems = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); groupCatItems[groupKey] = catItems; }
+                        if (!groupCatSubtypeTotals.TryGetValue(groupKey, out catSubtypeTotals))
+                        { catSubtypeTotals = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase); groupCatSubtypeTotals[groupKey] = catSubtypeTotals; }
+
                         foreach (var cat in tag.Categories)
                         {
                             int prev;
@@ -493,24 +507,39 @@ namespace InventoryManagerLight
                 catch { }
             }
 
+            var emptyCatMap     = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var emptySubtypeMap = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var panel in lcdPanels)
             {
                 try
                 {
+                    Dictionary<string, int> catContainers, catItems;
+                    Dictionary<string, Dictionary<string, int>> catSubtypeTotals;
+                    groupCatContainers.TryGetValue(panel.groupKey, out catContainers);
+                    groupCatItems.TryGetValue(panel.groupKey, out catItems);
+                    groupCatSubtypeTotals.TryGetValue(panel.groupKey, out catSubtypeTotals);
                     bool isAlert;
-                    var rows = BuildLcdContent(catContainers, catItems, catSubtypeTotals, panel.filter, out isAlert);
+                    var rows = BuildLcdContent(
+                        catContainers    ?? emptyCatMap,
+                        catItems         ?? emptyCatMap,
+                        catSubtypeTotals ?? emptySubtypeMap,
+                        panel.filter, out isAlert);
                     LcdManager.Instance.EnqueueUpdate(panel.entityId, rows, isAlert);
                 }
                 catch { }
             }
 
-            // Log a server-side warning for every category currently below its threshold.
-            foreach (var cat in catItems.Keys)
+            // Log a server-side warning for every category currently below its threshold (per group).
+            foreach (var groupItems in groupCatItems.Values)
             {
-                int total; catItems.TryGetValue(cat, out total);
-                int threshold;
-                if (_config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold)
-                    _logger?.Warn($"IML: Low stock — {cat}: {total:N0}/{threshold:N0}");
+                foreach (var cat in groupItems.Keys)
+                {
+                    int total; groupItems.TryGetValue(cat, out total);
+                    int threshold;
+                    if (_config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold)
+                        _logger?.Warn($"IML: Low stock — {cat}: {total:N0}/{threshold:N0}");
+                }
             }
 
             LcdManager.Instance.ApplyPendingUpdates();

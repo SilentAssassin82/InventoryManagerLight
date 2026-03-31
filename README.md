@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.4.0  
+> **Version:** 1.4.2  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -626,6 +626,13 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.4.2
+- **LCD per-conveyor-group isolation:** Each LCD panel now displays inventory totals from its own conveyor cluster only. Previously all IML-tagged containers server-wide contributed to a single aggregate, so Player A's `[IML:LCD=INGOTS]` panel would show items from Player B's unconnected INGOTS chest as well. Sorting was already correctly isolated by group; LCD stats now match.
+
+### v1.4.1
+- **Shrink-to-fit LCD scaling:** When content rows exceed the panel height the renderer now measures the total required height and scales everything down uniformly (font size, row height, bar height, icon size, padding — all multiplied by the same factor, minimum `0.4`). Panels with few categories are unaffected; panels with many categories no longer clip the footer or bottom separator.
+- **Duplicate item rows fixed:** The category detail view (`IML:LCD=INGOTS` etc.) was showing the same SubtypeId twice when items of different TypeIds shared a name — most visibly when ore was present in an ingots chest (`MyObjectBuilder_Ingot/Nickel` and `MyObjectBuilder_Ore/Nickel` both displayed as `Nickel`). Colliding display names are now disambiguated with a short type qualifier, e.g. `Nickel [Ingot]` and `Nickel [Ore]`.
 
 ### v1.4.0
 - **Sprite-based LCD rendering:** All IML LCD panels now use SE's `ContentType.SCRIPT` sprite API instead of `WriteText`. No mod dependency — this is vanilla SE.

@@ -748,8 +748,11 @@ namespace InventoryManagerLight
                         {
                             displayName = subtype;
                         }
-                        int subtypeThreshold;
-                        bool subtypeLow = _config.MinStockThresholds.TryGetValue(subtype, out subtypeThreshold) && kv.Value < subtypeThreshold;
+                        int subtypeThreshold = 0;
+                        foreach (var thr in _config.MinStockThresholds)
+                            if (!catContainers.ContainsKey(thr.Key) && ThresholdKeyMatches(thr.Key, kv.Key))
+                            { subtypeThreshold = thr.Value; break; }
+                        bool subtypeLow = subtypeThreshold > 0 && kv.Value < subtypeThreshold;
                         if (subtypeLow) isAlert = true;
                         rows.Add(new LcdSpriteRow
                         {
@@ -798,13 +801,31 @@ namespace InventoryManagerLight
             int total = 0;
             foreach (var catMap in catSubtypeTotals.Values)
                 foreach (var kv in catMap)
-                {
-                    int slash = kv.Key.IndexOf('/');
-                    var sn = slash >= 0 ? kv.Key.Substring(slash + 1) : kv.Key;
-                    if (string.Equals(sn, subtypeKey, StringComparison.OrdinalIgnoreCase))
+                    if (ThresholdKeyMatches(subtypeKey, kv.Key))
                         total += kv.Value;
-                }
             return total;
+        }
+
+        // Returns true if a config threshold key matches a full "TypeId/SubtypeId" item key.
+        // configKey may be:
+        //   "Platinum"       — matches any TypeId that has SubtypeId Platinum
+        //   "Ingot/Platinum" — matches only MyObjectBuilder_Ingot/Platinum
+        private static bool ThresholdKeyMatches(string configKey, string fullItemKey)
+        {
+            int itemSlash = fullItemKey.IndexOf('/');
+            var itemSubtype = itemSlash >= 0 ? fullItemKey.Substring(itemSlash + 1) : fullItemKey;
+            int cfgSlash = configKey.IndexOf('/');
+            if (cfgSlash >= 0)
+            {
+                var cfgType    = configKey.Substring(0, cfgSlash);
+                var cfgSubtype = configKey.Substring(cfgSlash + 1);
+                var itemTypeRaw   = itemSlash >= 0 ? fullItemKey.Substring(0, itemSlash) : "";
+                var itemTypeShort = itemTypeRaw.StartsWith("MyObjectBuilder_", StringComparison.OrdinalIgnoreCase)
+                    ? itemTypeRaw.Substring("MyObjectBuilder_".Length) : itemTypeRaw;
+                return string.Equals(cfgType, itemTypeShort, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(cfgSubtype, itemSubtype, StringComparison.OrdinalIgnoreCase);
+            }
+            return string.Equals(configKey, itemSubtype, StringComparison.OrdinalIgnoreCase);
         }
 #endif
 
@@ -1085,12 +1106,8 @@ namespace InventoryManagerLight
                     if (catContainers.ContainsKey(kv.Key)) continue; // already reported as category
                     int total = 0;
                     foreach (var sub in allSubtypes)
-                    {
-                        int slash = sub.Key.IndexOf('/');
-                        var sn = slash >= 0 ? sub.Key.Substring(slash + 1) : sub.Key;
-                        if (string.Equals(sn, kv.Key, StringComparison.OrdinalIgnoreCase))
+                        if (ThresholdKeyMatches(kv.Key, sub.Key))
                             total += sub.Value;
-                    }
                     bool isLow = total < kv.Value;
                     if (isLow) subtypeLowCount++;
                     var lowNote = isLow ? $"  [LOW: {total:N0}/{kv.Value:N0}]" : $"  {total:N0}/{kv.Value:N0}";

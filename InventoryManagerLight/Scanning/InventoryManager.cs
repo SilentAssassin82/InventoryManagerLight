@@ -639,11 +639,35 @@ namespace InventoryManagerLight
                 {
                     var sorted = new List<KeyValuePair<string, int>>(subtypeMap);
                     sorted.Sort((a, b) => b.Value.CompareTo(a.Value));
+
+                    // Count how many entries share the same SubtypeId so we can disambiguate
+                    // e.g. MyObjectBuilder_Ingot/Nickel vs MyObjectBuilder_Ore/Nickel both → "Nickel"
+                    var subtypeCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var kv in sorted)
+                    {
+                        int slash = kv.Key.IndexOf('/');
+                        var sn = slash >= 0 ? kv.Key.Substring(slash + 1) : kv.Key;
+                        int c; subtypeCount.TryGetValue(sn, out c); subtypeCount[sn] = c + 1;
+                    }
+
                     foreach (var kv in sorted)
                     {
                         // kv.Key is "MyObjectBuilder_Ingot/Iron" — strip TypeId prefix for the display name
                         int slash = kv.Key.IndexOf('/');
-                        var displayName = slash >= 0 ? kv.Key.Substring(slash + 1) : kv.Key;
+                        var subtype     = slash >= 0 ? kv.Key.Substring(slash + 1) : kv.Key;
+                        int c; subtypeCount.TryGetValue(subtype, out c);
+                        string displayName;
+                        if (c > 1)
+                        {
+                            // Two different TypeIds share this SubtypeId — add a short qualifier
+                            var typeId = slash >= 0 ? kv.Key.Substring(0, slash) : "";
+                            var prefix = typeId.StartsWith("MyObjectBuilder_") ? typeId.Substring("MyObjectBuilder_".Length) : typeId;
+                            displayName = $"{subtype} [{prefix}]";
+                        }
+                        else
+                        {
+                            displayName = subtype;
+                        }
                         rows.Add(new LcdSpriteRow
                         {
                             RowKind    = LcdSpriteRow.Kind.Item,

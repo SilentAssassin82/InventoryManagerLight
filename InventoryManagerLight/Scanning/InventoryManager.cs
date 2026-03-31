@@ -757,7 +757,7 @@ namespace InventoryManagerLight
                         }
                         else
                         {
-                            rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, IconSprite = kv.Key, Text = $"{displayName}  {kv.Value:N0}", TextColor = white });
+                            rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.ItemBar, IconSprite = kv.Key, Text = displayName, StatText = $"{kv.Value:N0}/{kv.Value:N0}", TextColor = white, BarFill = 1f, BarFillColor = green });
                         }
                     }
                     int total = 0; foreach (var kv in subtypeMap) total += kv.Value;
@@ -773,7 +773,7 @@ namespace InventoryManagerLight
                     }
                     else
                     {
-                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Item, Text = $"Total: {total:N0}", TextColor = white });
+                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.ItemBar, Text = "Total", StatText = $"{total:N0}/{total:N0}", TextColor = white, BarFill = 1f, BarFillColor = green });
                     }
                 }
                 else

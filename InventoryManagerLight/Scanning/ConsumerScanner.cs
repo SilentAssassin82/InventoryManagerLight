@@ -199,6 +199,15 @@ namespace InventoryManagerLight
             {
                 _logger.Error("ConsumerScanner exception: " + ex.Message);
             }
+
+            // Urgency detection: second pass counting items in managed containers for each
+            // category that has an UrgentStockThreshold configured. Runs on the same interval
+            // as the main consumer scan so urgency is detected within ScannerIntervalTicks ticks.
+            if (_config.UrgentStockThresholds.Count > 0)
+            {
+                try { UpdateUrgencyState(demand); }
+                catch (Exception ex) { _logger.Debug("ConsumerScanner: urgency scan failed: " + ex.Message); }
+            }
 #else
             // no-op outside TORCH
 #endif
@@ -295,6 +304,66 @@ namespace InventoryManagerLight
             }
             catch { }
             return default(VRage.Game.MyDefinitionId);
+        }
+
+        // Count items of each urgent category across all IML-managed containers and update
+        // the demand tracker's urgency flags. Only categories listed in UrgentStockThresholds
+        // are checked, so the scan is cheap when the feature is not configured.
+        private void UpdateUrgencyState(InventoryDemandTracker demand)
+        {
+            var catTotals = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var block in GetAllTerminalBlocks())
+            {
+                try
+                {
+                    string name = null; string cd = null;
+                    try { name = block.CustomName; } catch { }
+                    try { cd = (string)block.GetType().GetProperty("CustomData")?.GetValue(block); } catch { }
+                    var tag = ContainerMatcher.ParseContainerTag(name, cd, _config.ContainerTagPrefix);
+                    if (tag.Categories == null || tag.Categories.Length == 0) continue;
+
+                    foreach (var cat in tag.Categories)
+                    {
+                        if (!_config.UrgentStockThresholds.ContainsKey(cat)) continue;
+                        for (int i = 0; i < block.InventoryCount; i++)
+                        {
+                            var inv = block.GetInventory(i);
+                            if (inv == null) continue;
+                            var items = new List<Ingame.MyInventoryItem>();
+                            inv.GetItems(items);
+                            foreach (var it in items)
+                            {
+                                try
+                                {
+                                    var id = GetDefinitionIdFromStack(it);
+                                    if (_resolver != null && _resolver.ItemMatchesCategory(id, id.ToString(), cat))
+                                    {
+                                        long prev; catTotals.TryGetValue(cat, out prev);
+                                        catTotals[cat] = prev + it.Amount.ToIntSafe();
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            foreach (var kv in _config.UrgentStockThresholds)
+            {
+                long total; catTotals.TryGetValue(kv.Key, out total);
+                bool wasUrgent = demand.IsUrgent(kv.Key);
+                bool isNowUrgent = total < kv.Value;
+                if (isNowUrgent != wasUrgent)
+                {
+                    demand.SetUrgent(kv.Key, isNowUrgent);
+                    if (isNowUrgent)
+                        _logger.Info($"IML: Urgency triggered — {kv.Key} stock {total} < threshold {kv.Value}. Urgent transfers will be prioritised.");
+                    else
+                        _logger.Info($"IML: Urgency cleared — {kv.Key} stock {total} >= threshold {kv.Value}. Normal scheduling resumed.");
+                }
+            }
         }
 #endif
     }

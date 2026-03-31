@@ -117,7 +117,6 @@
     <Compile Include="Scanning\InventoryManager.cs" />
     <Compile Include="Display\LcdManager.cs" />
     <Compile Include="Infrastructure\Logger.cs" />
-    <Compile Include="Infrastructure\ObjectPool.cs" />
     <Compile Include="Sorting\Planner.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Config\RuntimeConfig.cs" />

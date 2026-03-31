@@ -140,5 +140,19 @@ namespace InventoryManagerLight
         // instead of AutoSortIntervalTicks. Keeps critical categories topped up faster without
         // requiring per-category config. Default: 1200 (~20 sec). Set to 0 to disable.
         public int LowStockSortIntervalTicks { get; set; } = 1200;
+
+        // Per-category urgent stock thresholds. When total items of a category across all managed
+        // containers drops below the threshold, that category enters urgent mode: its transfers are
+        // sorted ahead of all normal transfers in the current plan cycle.
+        // Example: { "AMMO": 500 } — ammo moves are prioritised when total stored ammo drops below 500.
+        // Urgency is detected every ScannerIntervalTicks ticks (default ~0.17 s).
+        // Leave empty (default) to disable automatic urgency.
+        public Dictionary<string, int> UrgentStockThresholds { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // When true, plan batches will contain ONLY urgent-category ops while any urgent category
+        // is active — all normal (ingot/ore/component) transfers are held until urgency clears.
+        // When false (default), urgent ops are sorted to the front of the batch but normal ops
+        // still execute after them within the same per-tick budget.
+        public bool ExcludeNonUrgentWhenUrgent { get; set; } = false;
     }
 }

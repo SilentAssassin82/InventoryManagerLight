@@ -11,6 +11,8 @@ namespace InventoryManagerLight
     {
         private readonly System.Collections.Concurrent.ConcurrentDictionary<VRage.Game.MyDefinitionId, long> _demand = new System.Collections.Concurrent.ConcurrentDictionary<VRage.Game.MyDefinitionId, long>(new MyDefinitionIdComparer());
         private readonly System.Collections.Concurrent.ConcurrentDictionary<Tuple<long, VRage.Game.MyDefinitionId>, long> _ownerDemand = new System.Collections.Concurrent.ConcurrentDictionary<Tuple<long, VRage.Game.MyDefinitionId>, long>();
+        // Categories currently in urgent mode (stock below configured threshold).
+        private readonly ConcurrentDictionary<string, bool> _urgentCategories = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         public void AddDemand(VRage.Game.MyDefinitionId def, int amount)
         {
@@ -54,6 +56,25 @@ namespace InventoryManagerLight
             _demand.Clear();
             _ownerDemand.Clear();
         }
+
+        // Mark or clear a category as urgent. Thread-safe.
+        public void SetUrgent(string category, bool urgent)
+        {
+            if (string.IsNullOrEmpty(category)) return;
+            if (urgent) _urgentCategories[category] = true;
+            else { bool dummy; _urgentCategories.TryRemove(category, out dummy); }
+        }
+
+        public bool IsUrgent(string category)
+        {
+            bool v;
+            return _urgentCategories.TryGetValue(category, out v) && v;
+        }
+
+        public bool IsAnyUrgent { get { return !_urgentCategories.IsEmpty; } }
+
+        // Snapshot of currently urgent category names (safe to iterate on any thread).
+        public string[] UrgentCategories { get { return _urgentCategories.Keys.ToArray(); } }
 
         // Apply decay factor to all recorded demands. Factor should be in (0..1]; values are multiplied by factor.
         public void ApplyDecay(double factor)

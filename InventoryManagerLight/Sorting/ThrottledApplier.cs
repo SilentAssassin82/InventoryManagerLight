@@ -10,7 +10,6 @@ namespace InventoryManagerLight
     {
         private readonly ConcurrentQueue<TransferBatch> _batchQueue;
         private readonly RuntimeConfig _config;
-        private readonly ConcurrentQueue<ReplanRequest> _replanQueue = new ConcurrentQueue<ReplanRequest>();
         private readonly IInventoryAdapter _adapter;
         private readonly ILogger _logger;
         private long _totalItemsMoved;
@@ -73,23 +72,8 @@ namespace InventoryManagerLight
                     var op = batch.Ops[i];
                     // actual calls to game API must happen here on the game thread.
                     var result = ApplyOp(op);
-                    _logger.Debug($"ApplyOp attempt src:{op.SourceOwner} dst:{op.DestinationOwner} item:{op.ItemDefinitionId} amt:{op.Amount} -> {result.Status}/{result.Moved}");
-                    if (result.Status == TransferStatus.Success)
-                    {
-                        // fully applied
-                    }
-                    else if (result.Status == TransferStatus.Partial)
-                    {
-                        // enqueue remaining portion for replanning
-                        var remaining = new TransferOp { SourceOwner = op.SourceOwner, DestinationOwner = op.DestinationOwner, ItemDefinitionId = op.ItemDefinitionId, Amount = op.Amount - result.Moved };
-                        var req = new ReplanRequest { RemainingOp = remaining, Reason = "PartialMove" };
-                        _replanQueue.Enqueue(req);
-                    }
-                    else // failed
-                    {
-                        var req2 = new ReplanRequest { RemainingOp = op, Reason = "Failed" };
-                        _replanQueue.Enqueue(req2);
-                    }
+                    if (_logger.IsEnabled(RuntimeConfig.LogLevel.Debug))
+                        _logger.Debug($"ApplyOp src:{op.SourceOwner} dst:{op.DestinationOwner} item:{op.ItemDefinitionId} amt:{op.Amount} -> {result.Status}/{result.Moved}");
                     i++;
                     applied++;
                 }
@@ -108,13 +92,7 @@ namespace InventoryManagerLight
             }
         }
 
-        private void ApplyOpStub(TransferOp op)
-        {
-            // Place holder where MyInventory.TransferItemTo or similar would be called on the game thread.
-            // Keep very small and fast.
-        }
-
-        // Replaces ApplyOpStub. Runs on game thread. Returns moved count and status.
+        // Runs on game thread. Returns moved count and status.
         private TransferResult ApplyOp(TransferOp op)
         {
             // Source gone or already empty — op is vacuously satisfied.

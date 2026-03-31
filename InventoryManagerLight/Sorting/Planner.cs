@@ -350,6 +350,7 @@ namespace InventoryManagerLight
                 _previous[c.Key] = c.Value;
             }
 
+            ApplyUrgencyOrdering(batch);
             return batch;
         }
 
@@ -540,7 +541,45 @@ namespace InventoryManagerLight
                     _logger?.Debug($"IML:   No destination: {u}");
             }
             catch (Exception ex) { _logger?.Debug("Planner: ForcedSort logging failed: " + ex.Message); }
+            ApplyUrgencyOrdering(batch);
             return batch;
+        }
+
+        // Returns true when the op's item belongs
+        private bool IsOpUrgent(TransferOp op)
+        {
+            if (_demandTracker == null || _categoryResolver == null) return false;
+            var urgent = _demandTracker.UrgentCategories;
+            if (urgent.Length == 0) return false;
+            var itemStr = op.ItemDefinitionId.ToString();
+            foreach (var cat in urgent)
+            {
+                if (_categoryResolver.ItemMatchesCategory(op.ItemDefinitionId, itemStr, cat))
+                    return true;
+            }
+            return false;
+        }
+
+        // Sorts a batch so urgent-category ops come first. When ExcludeNonUrgentWhenUrgent is
+        // true, non-urgent ops are dropped entirely until urgency clears (hard pause).
+        private void ApplyUrgencyOrdering(TransferBatch batch)
+        {
+            if (batch == null || batch.Ops.Count <= 1) return;
+            if (_demandTracker == null || !_demandTracker.IsAnyUrgent) return;
+
+            if (_config != null && _config.ExcludeNonUrgentWhenUrgent)
+            {
+                batch.Ops.RemoveAll(op => !IsOpUrgent(op));
+                return;
+            }
+
+            batch.Ops.Sort((a, b) =>
+            {
+                bool au = IsOpUrgent(a);
+                bool bu = IsOpUrgent(b);
+                if (au == bu) return 0;
+                return au ? -1 : 1;
+            });
         }
 
         private void ProcessReplanRequests()

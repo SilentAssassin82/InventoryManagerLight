@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.4.3  
+> **Version:** 1.4.4  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -477,6 +477,8 @@ Available settings:
 | `RequireContainerGroupMatch` | `false` | If `true`, items never cross container-group boundaries — strict group isolation. If `false` (default), same-group containers are preferred but IML will use other groups as a fallback when no matching container exists in the group |
 | `CategorySortIntervalTicks` | *(empty)* | Per-category sort interval overrides. When any entry is present, the effective sort interval is the **minimum** of `AutoSortIntervalTicks` and all configured category values. Useful for keeping ammo topped up on a tighter schedule than the global interval — see below |  
 | `LowStockSortIntervalTicks` | `1200` | Fast-rescan interval (ticks) used when any `MinStockThresholds` category drops below its threshold. Overrides `AutoSortIntervalTicks` in the same min-of-all logic. Default ≈ 20 sec at 60 UPS. Set to `0` to disable fast rescan |  
+| `UrgentStockThresholds` | *(empty)* | Per-category stock thresholds that trigger urgent transfer mode — urgent ops are sorted to the front of every plan batch. See [Urgency Mode](#urgency-mode-combat-prioritisation) |
+| `ExcludeNonUrgentWhenUrgent` | `false` | When `true`, all non-urgent transfers are dropped from the batch while any category is urgent (hard pause). When `false` (default), urgent ops run first but normal ops still fill remaining tick budget |
 | `CustomCategories` | *(empty)* | Admin-defined categories for modded items — see [Custom Categories](#custom-categories-mod-support) below |
 
 ### Setting AssemblerThresholds in the config file
@@ -513,6 +515,42 @@ Add one `<Item>` per category inside `<MinStockThresholds>`:
 Then run `!iml reload`. When a category's total item count drops below its threshold, `!iml status` flags it with `[!]` and LCD panels show the progress bar in a low-stock state.
 
 > **Low-stock fast rescan:** When any threshold-tracked category is below its limit, the next sort fires at `LowStockSortIntervalTicks` (default ≈ 20 sec) instead of waiting for the full `AutoSortIntervalTicks` cycle. This means ammo and other critical items re-stock much faster without reducing the global sort interval for everything else.
+
+---
+
+### Setting UrgentStockThresholds in the config file
+
+Urgency mode detects when a critical category's stock has dropped below a configured level and automatically prioritises its transfers above everything else. The most common use case is ammo during PvP — the moment ammo runs low, every planner pass moves ammo first and lets ore/ingots/components wait.
+
+```xml
+<ImlConfig>
+  <UrgentStockThresholds>
+    <Item key="AMMO" value="500" />
+  </UrgentStockThresholds>
+</ImlConfig>
+```
+
+Then run `!iml reload`.
+
+**How urgency works:**
+
+- IML counts the total amount of each urgent category across all managed containers, checked every `ScannerIntervalTicks` ticks (default ≈ 0.17 sec) — fast enough to detect depletion mid-fight
+- When stock drops below the threshold, urgency triggers and a line is written to the Torch log: `IML: Urgency triggered — AMMO stock 312 < threshold 500. Urgent transfers will be prioritised.`
+- While urgent, all ammo transfer ops are sorted to the **front** of every plan batch — they run before ingot, ore, and component moves within the same per-tick budget
+- When stock recovers above the threshold, urgency clears and normal scheduling resumes: `IML: Urgency cleared — AMMO stock 512 >= threshold 500. Normal scheduling resumed.`
+- Multiple categories can be urgent at the same time; all of them are front-sorted together
+
+**Hard pause — block all other transfers until urgency clears:**
+
+```xml
+<ExcludeNonUrgentWhenUrgent>true</ExcludeNonUrgentWhenUrgent>
+```
+
+With this flag set, IML drops all non-urgent ops from the plan batch entirely while any category is urgent. Ingots, ore, and components will not move at all until the urgent category is restocked. Use this on dedicated PvP ships where every available transfer slot should go toward ammo.
+
+> **`UrgentStockThresholds` vs `MinStockThresholds`:** These are independent. `MinStockThresholds` controls LCD alerts and the low-stock fast-rescan timer — it has no effect on transfer ordering. `UrgentStockThresholds` controls transfer priority and the hard-pause option — it does not affect LCD displays. You can configure both for the same category at different levels: for example, urgent at 500 (transfers prioritised) and low-stock alert at 1 000 (LCD `[!]` marker).
+
+> **Recommended PvP setup:** combine a short `CategorySortIntervalTicks` for AMMO (proactive — keeps ammo topped up between fights) with an `UrgentStockThresholds` entry (reactive — reprioritises immediately if ammo is consumed faster than the sort interval). Together they cover both steady-state stocking and burst combat scenarios.
 
 ---
 
@@ -670,6 +708,10 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.4.4
+- **Urgency mode — combat transfer prioritisation:** When a category's total stock in managed containers drops below a configured `UrgentStockThresholds` value, that category enters urgent mode. All transfer ops for urgent categories are sorted to the front of each plan batch ahead of low-priority items such as ore and ingots. On a PvP ship, ammo restocking happens immediately on the next planner pass without waiting for ingot/component moves to complete first. Urgency is detected every `ScannerIntervalTicks` (≈ 0.17 sec default) so depletion mid-fight is caught within seconds. When stock recovers the urgency flag clears automatically and normal scheduling resumes. An optional `ExcludeNonUrgentWhenUrgent` flag enables a hard pause — all non-urgent transfers are dropped from the batch entirely until urgency clears.
+- **Internal cleanup:** Removed unused `ObjectPool` infrastructure class. Tightened debug log guard in `ThrottledApplier` to only format the log string when debug logging is actually enabled.
 
 ### v1.4.3
 - **`!iml refreshdefs` — file output:** Instead of spamming the Torch console with one line per unknown item, the command now writes the full list to `iml-unknown-items.txt` in the plugin folder and prints a single summary line (`X unknown subtypes found — written to <path>`). The file is easy to open, search, and copy from.

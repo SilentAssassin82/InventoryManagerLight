@@ -39,23 +39,19 @@ namespace InventoryManagerLight
             _logger = logger;
         }
 
-        // Holds the min and max queue targets for a single item.
+        // Holds the min and max queue targets for a single item on an assembler.
         // When no range is specified (IML:MIN=SteelPlate:1000), Min == Max == 1000.
         // When a range is specified (IML:MIN=SteelPlate:500-2000), Min=500 Max=2000:
         //   IML queues until projected stock reaches Max, and uses Min as the alert floor.
-        // When CONSUMERS is specified (IML:MIN=NATO_25x184mm:CONSUMERS=120), IsConsumers=true
-        //   and the effective target is computed as weapon-block-count × ClipsPerWeapon each scan.
+        // Consumer contributions (from IML:MIN=SubtypeId:CONSUMERS=N on weapon blocks) are
+        //   added on top of the assembler's fixed target at queue time — see groupConsumers in ScanAndQueue.
         private struct AssemblerTarget
         {
             public readonly int Min;
             public readonly int Max;
-            public readonly bool IsConsumers;   // true when CONSUMERS keyword is used
-            public readonly int ClipsPerWeapon; // clips-per-weapon multiplier for CONSUMERS mode
-            public bool HasRange => !IsConsumers && Max > Min;
-            public AssemblerTarget(int min, int max) { Min = Math.Min(min, max); Max = Math.Max(min, max); IsConsumers = false; ClipsPerWeapon = 0; }
-            private AssemblerTarget(bool isConsumers, int clipsPerWeapon) { Min = 0; Max = 0; IsConsumers = isConsumers; ClipsPerWeapon = clipsPerWeapon; }
+            public bool HasRange => Max > Min;
+            public AssemblerTarget(int min, int max) { Min = Math.Min(min, max); Max = Math.Max(min, max); }
             public static AssemblerTarget Single(int target) { return new AssemblerTarget(target, target); }
-            public static AssemblerTarget Consumers(int clipsPerWeapon) { return new AssemblerTarget(true, clipsPerWeapon); }
         }
 
         // Parse IML:MIN= entries from an assembler's CustomData (multi-line) or block name (single line fallback).
@@ -102,22 +98,8 @@ namespace InventoryManagerLight
                 if (parts.Length != 2) continue;
                 var subtype   = parts[0].Trim();
                 var amountStr = parts[1].Trim();
-                // CONSUMERS[=N]: auto-scale target to (weapon-block count) × (clips per weapon).
-                //   IML:MIN=NATO_25x184mm:CONSUMERS     → 100 clips per weapon (default)
-                //   IML:MIN=NATO_25x184mm:CONSUMERS=120 → 120 clips per weapon
-                if (amountStr.StartsWith("CONSUMERS", StringComparison.OrdinalIgnoreCase))
-                {
-                    int clips = 100;
-                    var rest = amountStr.Substring("CONSUMERS".Length).TrimStart();
-                    if (rest.Length > 0 && rest[0] == '=')
-                    {
-                        int parsed;
-                        if (int.TryParse(rest.Substring(1).Trim(), out parsed) && parsed > 0)
-                            clips = parsed;
-                    }
-                    result[subtype] = AssemblerTarget.Consumers(clips);
-                    continue;
-                }
+                // CONSUMERS belongs on weapon blocks, not assemblers — silently skip if found here
+                if (amountStr.StartsWith("CONSUMERS", StringComparison.OrdinalIgnoreCase)) continue;
                 // Support min-max range: SteelPlate:500-2000
                 var dashIdx = amountStr.IndexOf('-');
                 if (dashIdx > 0)
@@ -131,10 +113,47 @@ namespace InventoryManagerLight
                 else
                 {
                     int amount;
-                    if (int.TryParse(amountStr, out amount) && amount > 0)
+                    if (int.TryParse(amountStr, out amount) && amount >= 0)
                         result[subtype] = AssemblerTarget.Single(amount);
                 }
             }
+        }
+
+        // Parse IML:MIN=SubtypeId:CONSUMERS[=N] entries from any block's CustomData.
+        // Returns a per-subtype contribution (clips) declared by this single block.
+        // Weapon blocks tag themselves:  IML:MIN=NATO_25x184mm:CONSUMERS=120
+        // The caller aggregates contributions across all blocks into a per-group total,
+        // which is then added on top of the assembler's fixed IML:MIN= target at queue time.
+        private Dictionary<string, int> ParseConsumerContributions(string customData)
+        {
+            var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(customData)) return result;
+            var minKey = _config.ContainerTagPrefix + "MIN=";
+            foreach (var line in customData.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = line.Trim();
+                if (!trimmed.StartsWith(minKey, StringComparison.OrdinalIgnoreCase)) continue;
+                var value = trimmed.Substring(minKey.Length).Trim().TrimEnd(']', ')', '>');
+                foreach (var pair in value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var parts = pair.Trim().Split(new[] { ':' }, 2);
+                    if (parts.Length != 2) continue;
+                    var subtype   = parts[0].Trim();
+                    var amountStr = parts[1].Trim();
+                    if (!amountStr.StartsWith("CONSUMERS", StringComparison.OrdinalIgnoreCase)) continue;
+                    int clips = 100;
+                    var rest = amountStr.Substring("CONSUMERS".Length).TrimStart();
+                    if (rest.Length > 0 && rest[0] == '=')
+                    {
+                        int parsed;
+                        if (int.TryParse(rest.Substring(1).Trim(), out parsed) && parsed > 0)
+                            clips = parsed;
+                    }
+                    int prev; result.TryGetValue(subtype, out prev);
+                    result[subtype] = prev + clips;
+                }
+            }
+            return result;
         }
 
 #if TORCH
@@ -197,12 +216,7 @@ namespace InventoryManagerLight
                     foreach (var kv in thresholds)
                     {
                         if (pairs.Length > 0) pairs.Append(", ");
-                        if (kv.Value.IsConsumers)
-                            pairs.Append($"{kv.Key}:CONSUMERS={kv.Value.ClipsPerWeapon}");
-                        else if (kv.Value.HasRange)
-                            pairs.Append($"{kv.Key}:{kv.Value.Min}-{kv.Value.Max}");
-                        else
-                            pairs.Append($"{kv.Key}:{kv.Value.Max}");
+                        pairs.Append(kv.Value.HasRange ? $"{kv.Key}:{kv.Value.Min}-{kv.Value.Max}" : $"{kv.Key}:{kv.Value.Max}");
                     }
                     diag.Add($"  FOUND '{asmName}' — targets: {pairs}");
                 }
@@ -286,38 +300,36 @@ namespace InventoryManagerLight
                 catch { }
             }
 
-            // Weapon-block count per conveyor group — used to resolve CONSUMERS targets in Phase 1.
-            // Counts IMyLargeTurretBase (all turret types) plus common fixed-weapon block names.
-            var groupWeaponCount = new Dictionary<long, int>();
-            bool needConsumerScan = false;
-            foreach (var td in customDataThresholds.Values)
+            // Consumer contributions per conveyor group.
+            // Any block with IML:MIN=SubtypeId:CONSUMERS=N in its CustomData adds N to the group
+            // total for that subtype. The assembler's effective target = its fixed IML:MIN= amount
+            // + the group's consumer total — so turrets each declare their own ammo need and the
+            // assembler's base stockpile is maintained on top automatically.
+            var groupConsumers = new Dictionary<long, Dictionary<string, int>>();
+            foreach (var tb in allBlocks)
             {
-                foreach (var tgt in td.Values)
-                    if (tgt.IsConsumers) { needConsumerScan = true; break; }
-                if (needConsumerScan) break;
-            }
-            if (needConsumerScan)
-            {
-                foreach (var tb in allBlocks)
+                try
                 {
-                    try
+                    string cd = null;
+                    try { cd = tb.CustomData; } catch { }
+                    var contributions = ParseConsumerContributions(cd);
+                    if (contributions.Count == 0) continue;
+                    var tbGrid = tb.CubeGrid as VRage.Game.ModAPI.IMyCubeGrid;
+                    if (tbGrid == null) continue;
+                    long tbGk;
+                    if (!gridGroupKeyCache.TryGetValue(tbGrid.EntityId, out tbGk))
+                    { tbGk = InventoryManager.GetConveyorGroupKey(tbGrid); gridGroupKeyCache[tbGrid.EntityId] = tbGk; }
+                    if (!assemblersByGroup.ContainsKey(tbGk)) continue;
+                    Dictionary<string, int> groupConsumer;
+                    if (!groupConsumers.TryGetValue(tbGk, out groupConsumer))
+                    { groupConsumer = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); groupConsumers[tbGk] = groupConsumer; }
+                    foreach (var kv in contributions)
                     {
-                        bool isWeapon = (tb is Sandbox.ModAPI.IMyLargeTurretBase)
-                            || tb.GetType().Name.IndexOf("GatlingGun",      StringComparison.OrdinalIgnoreCase) >= 0
-                            || tb.GetType().Name.IndexOf("MissileLauncher", StringComparison.OrdinalIgnoreCase) >= 0
-                            || tb.GetType().Name.IndexOf("AutomaticRifle",  StringComparison.OrdinalIgnoreCase) >= 0;
-                        if (!isWeapon) continue;
-                        var wGrid = tb.CubeGrid as VRage.Game.ModAPI.IMyCubeGrid;
-                        if (wGrid == null) continue;
-                        long wGk;
-                        if (!gridGroupKeyCache.TryGetValue(wGrid.EntityId, out wGk))
-                        { wGk = InventoryManager.GetConveyorGroupKey(wGrid); gridGroupKeyCache[wGrid.EntityId] = wGk; }
-                        if (!assemblersByGroup.ContainsKey(wGk)) continue;
-                        int prev; groupWeaponCount.TryGetValue(wGk, out prev);
-                        groupWeaponCount[wGk] = prev + 1;
+                        int prev; groupConsumer.TryGetValue(kv.Key, out prev);
+                        groupConsumer[kv.Key] = prev + kv.Value;
                     }
-                    catch { }
                 }
+                catch { }
             }
 
             // --- Phase 1: CustomData-tagged assemblers ---
@@ -379,20 +391,19 @@ namespace InventoryManagerLight
                         double current; totals.TryGetValue(kv.Key, out current);
                         double alreadyQueued; asmQueued.TryGetValue(kv.Key, out alreadyQueued);
                         double projected = current + alreadyQueued;
-                        int targetMax;
+                        Dictionary<string, int> consumerMap;
+                        int consumerContrib = 0;
+                        if (groupConsumers.TryGetValue(asmGk, out consumerMap))
+                            consumerMap.TryGetValue(kv.Key, out consumerContrib);
+                        int targetMax = kv.Value.Max + consumerContrib;
+                        if (targetMax <= 0) continue;
                         string rangeLabel;
-                        if (kv.Value.IsConsumers)
-                        {
-                            int wCount; groupWeaponCount.TryGetValue(asmGk, out wCount);
-                            targetMax  = wCount * kv.Value.ClipsPerWeapon;
-                            rangeLabel = $"{targetMax:N0} ({wCount} guns \u00d7 {kv.Value.ClipsPerWeapon})";
-                            if (targetMax <= 0) { diag.Add($"    {kv.Key}: CONSUMERS — no weapons found in conveyor group"); continue; }
-                        }
+                        if (consumerContrib > 0 && kv.Value.Max > 0)
+                            rangeLabel = $"{targetMax:N0} ({kv.Value.Max:N0} + {consumerContrib:N0} consumers)";
+                        else if (consumerContrib > 0)
+                            rangeLabel = $"{targetMax:N0} (consumers)";
                         else
-                        {
-                            targetMax  = kv.Value.Max;
                             rangeLabel = kv.Value.HasRange ? $"{kv.Value.Min:N0}\u2192{targetMax:N0}" : $"{targetMax:N0}";
-                        }
                         if (projected >= targetMax)
                         {
                             diag.Add($"    {kv.Key}: stock={current:N0} queued={alreadyQueued:N0} target={rangeLabel} — OK");
@@ -413,7 +424,9 @@ namespace InventoryManagerLight
                             continue;
                         }
 
-                        string logRange = kv.Value.IsConsumers ? $"consumers:{targetMax:N0}" : (kv.Value.HasRange ? $"min:{kv.Value.Min:N0} max:{targetMax:N0}" : $"target:{targetMax:N0}");
+                        string logRange = consumerContrib > 0
+                            ? (kv.Value.Max > 0 ? $"buffer:{kv.Value.Max:N0} consumers:{consumerContrib:N0} target:{targetMax:N0}" : $"consumers:{consumerContrib:N0} target:{targetMax:N0}")
+                            : (kv.Value.HasRange ? $"min:{kv.Value.Min:N0} max:{targetMax:N0}" : $"target:{targetMax:N0}");
                         _pendingAdditions.Enqueue(new PendingQueueAddition
                         {
                             Asm = asm,

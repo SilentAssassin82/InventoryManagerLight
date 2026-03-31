@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.4.6  
+> **Version:** 1.4.7  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -254,32 +254,44 @@ IML:MIN=Motor:300
 IML:MIN=Computer:200-1000
 ```
 
-#### Auto-scaling by weapon count: `CONSUMERS[=N]`
+#### Auto-scaling by weapon count: `CONSUMERS[=N]` on weapon blocks
+
+Tag each weapon block's CustomData with how many rounds it holds:
 
 ```
 IML:MIN=NATO_25x184mm:CONSUMERS=120
 ```
 
-Instead of a fixed number, `CONSUMERS=N` tells IML to count all weapon blocks in the same conveyor group and multiply by `N` (clips per weapon) to arrive at the effective target. When you add a turret, the target rises automatically — no manual `IML:MIN=` adjustment needed.
+IML scans all blocks in the conveyor group for `CONSUMERS` tags and sums their contributions. That total is added **on top of** the assembler's fixed `IML:MIN=` base target. When you add a turret, the effective target rises automatically — no manual change to the assembler needed.
 
-- `CONSUMERS=120` — counts weapons × 120
-- `CONSUMERS` (no `=N`) — counts weapons × 100 (default)
-- The count includes: all turret types (`IMyLargeTurretBase`) plus fixed-weapon blocks (Gatling Gun, Missile Launcher, Automatic Rifle)
-- Only weapons **connected to the same conveyor group** as the assembler are counted
-- If no weapons are found in the group, the item is skipped for that scan pass (logged in `!iml queueall`)
+- `CONSUMERS=120` — this block contributes 120 rounds to the group total
+- `CONSUMERS` (no `=N`) — contributes 100 rounds (default)
+- Works on any block type — turrets, fixed-weapon blocks, whatever has the tag
+- Only contributions from blocks **in the same conveyor group** as the assembler are counted
 
 **Typical turret-defence setup:**
+
+*Each turret's CustomData:*
 ```
 IML:MIN=NATO_25x184mm:CONSUMERS=120
-IML:MIN=AutocannonClip:CONSUMERS=60
 ```
 
-This keeps enough magazines for every turret on the grid to hold a full load, scaling up the moment a new gun is placed and connected.
+*Assembler's CustomData — base stockpile, unchanged when guns are added:*
+```
+IML:MIN=NATO_25x184mm:1000
+```
+
+With 5 turrets connected: effective target = 1 000 + (5 × 120) = **1 600**. Add a sixth turret and it becomes 1 720 automatically.
+
+To keep only enough for the guns with no fixed buffer, use `0` as the base:
+```
+IML:MIN=NATO_25x184mm:0
+```
 
 **How it appears in `!iml queueall`:**
 ```
-  FOUND 'Assembler' — targets: NATO_25x184mm:CONSUMERS=120
-    NATO_25x184mm: stock=480 queued=0 target=600 (5 guns × 120) — QUEUED 120
+  FOUND 'Assembler' — targets: NATO_25x184mm:1,000
+    NATO_25x184mm: stock=480 queued=0 target=1,600 (1,000 + 600 consumers) — QUEUED 1,120
 ```
 
 #### Player-priority yield
@@ -736,6 +748,9 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.4.7
+- **`IML:MIN=CONSUMERS[=N]` moves to weapon blocks:** Each weapon block now declares its own ammo requirement in its own CustomData (`IML:MIN=NATO_25x184mm:CONSUMERS=120`). IML sums all consumer contributions from blocks in the same conveyor group and adds that total **on top of** the assembler's fixed `IML:MIN=` base stockpile. Adding a turret automatically raises the effective target with no change to the assembler tag. Using `0` as the assembler base (`IML:MIN=NATO_25x184mm:0`) gives a pure consumer-driven target with no fixed buffer. The `!iml queueall` output shows the breakdown: `target=1,600 (1,000 + 600 consumers)`.
 
 ### v1.4.6
 - **`IML:MIN=CONSUMERS[=N]` — auto-scaling assembler targets by weapon count:** Instead of a fixed clip count, `CONSUMERS=N` counts all weapon blocks connected to the same conveyor group and multiplies by `N` to compute the effective minimum. Adding a turret automatically raises the production target — no manual `IML:MIN=` update required. All turret types (`IMyLargeTurretBase`) and common fixed-weapon blocks (Gatling Gun, Missile Launcher, Automatic Rifle) are counted. If no `=N` is specified, defaults to 100 clips per weapon. If no weapons are found in the group the item is skipped for that scan pass. The `!iml queueall` output shows the resolved target: `target=600 (5 guns × 120)`.

@@ -83,11 +83,14 @@ namespace InventoryManagerLight
                 QueueApplyDelayTicks        = c.QueueApplyDelayTicks,
                 SortScanIntervalTicks       = c.SortScanIntervalTicks,
                 RequireContainerGroupMatch  = c.RequireContainerGroupMatch,
+                LowStockSortIntervalTicks   = c.LowStockSortIntervalTicks,
             };
             foreach (var kv in c.AssemblerThresholds)
                 d.AssemblerThresholds.Add(new ImlConfigEntry { Key = kv.Key, Value = kv.Value });
             foreach (var kv in c.MinStockThresholds)
                 d.MinStockThresholds.Add(new ImlConfigEntry { Key = kv.Key, Value = kv.Value });
+            foreach (var kv in c.CategorySortIntervalTicks)
+                d.CategorySortIntervalTicks.Add(new ImlConfigEntry { Key = kv.Key, Value = kv.Value });
             foreach (var kv in c.CustomCategories)
                 d.CustomCategories.Add(new CustomCategoryData { Name = kv.Key, Subtypes = new List<string>(kv.Value) });
             return d;
@@ -106,6 +109,7 @@ namespace InventoryManagerLight
             c.QueueApplyDelayTicks       = d.QueueApplyDelayTicks;
             c.SortScanIntervalTicks      = d.SortScanIntervalTicks;
             c.RequireContainerGroupMatch = d.RequireContainerGroupMatch;
+            c.LowStockSortIntervalTicks  = d.LowStockSortIntervalTicks;
 
             c.AssemblerThresholds.Clear();
             foreach (var e in d.AssemblerThresholds)
@@ -116,6 +120,11 @@ namespace InventoryManagerLight
             foreach (var e in d.MinStockThresholds)
                 if (!string.IsNullOrWhiteSpace(e.Key))
                     c.MinStockThresholds[e.Key] = e.Value;
+
+            c.CategorySortIntervalTicks.Clear();
+            foreach (var e in d.CategorySortIntervalTicks)
+                if (!string.IsNullOrWhiteSpace(e.Key) && e.Value > 0)
+                    c.CategorySortIntervalTicks[e.Key] = e.Value;
 
             c.CustomCategories.Clear();
             foreach (var cat in d.CustomCategories)
@@ -165,6 +174,17 @@ namespace InventoryManagerLight
         // If true, items never cross container-group boundaries. Default: false.
         // When false, same-group containers are preferred but items may fall back to other groups.
         public bool RequireContainerGroupMatch { get; set; } = false;
+
+        // Ticks between sorts when any MinStockThreshold category is below threshold. Default: 1200 (~20 sec).
+        // Set to 0 to disable — falls back to AutoSortIntervalTicks even when stock is low.
+        public int LowStockSortIntervalTicks { get; set; } = 1200;
+
+        // Per-category sort interval overrides (ticks). The effective auto-sort interval is
+        // min(AutoSortIntervalTicks, min values here, LowStockSortIntervalTicks if low stock).
+        // Example: <Item key="AMMO" value="600" /> sorts approximately every 10 seconds.
+        [XmlArray("CategorySortIntervalTicks")]
+        [XmlArrayItem("Item")]
+        public List<ImlConfigEntry> CategorySortIntervalTicks { get; set; } = new List<ImlConfigEntry>();
 
         // Global minimum stock targets
         // Example: <Item key="SteelPlate" value="500" />

@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.4.2  
+> **Version:** 1.4.3  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -407,7 +407,7 @@ All commands are entered in the Torch console (or server chat with appropriate p
 | `!iml list` | Lists all containers currently tracked by IML with their tags and categories |
 | `!iml stockdump <SubtypeId>` | Shows every inventory slot containing the specified item, with amounts and slot type. Slots inside assembler/refinery input inventories are flagged `[SKIPPED by ScanAndQueue]`. Use this to diagnose unexpected stock counts — e.g. `!iml stockdump SteelPlate` |
 | `!iml dump` | Dumps detailed internal state to the Torch log for debugging |
-| `!iml refreshdefs` | Scans all loaded game definitions and logs any item subtypes not covered by any category. Useful for identifying modded items to add to `<CustomCategories>` in `iml-config.xml` |
+| `!iml refreshdefs` | Scans all loaded game definitions and writes every item subtype not covered by any category to `iml-unknown-items.txt` in the plugin folder. Responds with a one-line summary and the file path. Useful for identifying modded items to add to `<CustomCategories>` in `iml-config.xml` |
 | `!iml tagall <gridId\|name> <category>` | Adds an IML tag to the CustomData of every eligible inventory container on the specified grid. Skips production blocks, LCD panels, and locked containers. Accepts a bare category name (`COMPONENTS`) or the full tag (`IML:COMPONENTS`) |
 | `!iml cleartags <gridId\|name>` | Removes all IML tag lines from CustomData on every unlocked container on the specified grid. Block names are left untouched. Locked containers are skipped |
 | `!iml backuptags` | Exports all IML tags from every grid on the server to a timestamped file in the plugin folder (e.g. `iml-tags-20250612-143022.txt`) |
@@ -475,6 +475,8 @@ Available settings:
 | `QueueApplyDelayTicks` | `300` | Ticks to wait after an assembler scan before applying queue additions (~5 sec). Prevents K-menu client disconnects. Set to `0` for immediate apply |
 | `SortScanIntervalTicks` | `600` | Ticks between `IML:SortNow=1` flag polls (~10 sec at 60 UPS). Set to `0` to disable the SortNow polling entirely |
 | `RequireContainerGroupMatch` | `false` | If `true`, items never cross container-group boundaries — strict group isolation. If `false` (default), same-group containers are preferred but IML will use other groups as a fallback when no matching container exists in the group |
+| `CategorySortIntervalTicks` | *(empty)* | Per-category sort interval overrides. When any entry is present, the effective sort interval is the **minimum** of `AutoSortIntervalTicks` and all configured category values. Useful for keeping ammo topped up on a tighter schedule than the global interval — see below |  
+| `LowStockSortIntervalTicks` | `1200` | Fast-rescan interval (ticks) used when any `MinStockThresholds` category drops below its threshold. Overrides `AutoSortIntervalTicks` in the same min-of-all logic. Default ≈ 20 sec at 60 UPS. Set to `0` to disable fast rescan |  
 | `CustomCategories` | *(empty)* | Admin-defined categories for modded items — see [Custom Categories](#custom-categories-mod-support) below |
 
 ### Setting AssemblerThresholds in the config file
@@ -510,11 +512,36 @@ Add one `<Item>` per category inside `<MinStockThresholds>`:
 
 Then run `!iml reload`. When a category's total item count drops below its threshold, `!iml status` flags it with `[!]` and LCD panels show the progress bar in a low-stock state.
 
+> **Low-stock fast rescan:** When any threshold-tracked category is below its limit, the next sort fires at `LowStockSortIntervalTicks` (default ≈ 20 sec) instead of waiting for the full `AutoSortIntervalTicks` cycle. This means ammo and other critical items re-stock much faster without reducing the global sort interval for everything else.
+
+---
+
+### Setting CategorySortIntervalTicks in the config file
+
+Add one `<Item>` per category you want on its own schedule:
+
+```xml
+<ImlConfig>
+  <CategorySortIntervalTicks>
+    <Item key="AMMO" value="600" />
+    <Item key="BOTTLES" value="1200" />
+  </CategorySortIntervalTicks>
+</ImlConfig>
+```
+
+The effective sort interval each tick is the **minimum** of `AutoSortIntervalTicks`, every value in `CategorySortIntervalTicks`, and `LowStockSortIntervalTicks` when a low-stock condition is active. Sort passes are always full — these settings control *when* the pass fires, not what it sorts.
+
+> **PvP scenario:** set `AMMO` to `600` (~10 sec) so turrets never wait 2 minutes to re-stock during a fight, while ore and components sort at the normal 2-minute cadence.
+
+Then run `!iml reload`.
+
 ---
 
 ## Custom Categories (Mod Support)
 
-IML supports admin-defined categories for modded items. Define them in the `<CustomCategories>` section of `iml-config.xml` — each category maps to a list of **exact SubtypeId strings**. Once defined, containers are tagged exactly like built-in categories (`IML:MYCATEGORY`), and custom categories work in all LCD modes (`IML:LCD=MYCATEGORY`).
+> ⚠️ **Untested with real mods** — the custom category and wildcard matching features are implemented and build-verified, but have not yet been tested against an actual modded server. If you run into unexpected behaviour (items not routing, wildcards not matching, LCD not showing the category) please open an issue with your `<CustomCategories>` config and the output of `!iml refreshdefs`.
+
+IML supports admin-defined categories for modded items.
 
 ```xml
 <ImlConfig>
@@ -533,11 +560,28 @@ IML supports admin-defined categories for modded items. Define them in the `<Cus
 
 Then run `!iml reload`. Tag containers with `IML:ADVANCEDPARTS` or `IML:MODAMMO` exactly as you would a built-in category.
 
+### Wildcard SubtypeId Matching
+
+Subtype entries inside `<Category>` support `*` (any number of characters) and `?` (exactly one character) wildcards, so you don't need to list every variant individually:
+
+```xml
+<Category name="ADVANCEDPARTS">
+  <Subtype>Advanced*</Subtype>
+  <Subtype>*HeavyArmor*</Subtype>
+</Category>
+```
+
+- `Advanced*` matches `AdvancedSteelPlate`, `AdvancedMotor`, `AdvancedReactor`, etc.
+- `*HeavyArmor*` matches anything with `HeavyArmor` anywhere in its SubtypeId
+- `?` matches exactly one character — `Iron?` matches `IronA` but not `Iron` or `IronAB`
+- Wildcards and exact names can be mixed freely in the same category
+- Matching is **case-insensitive**
+
 **Finding modded SubtypeIds:**
 
-Use `!iml refreshdefs` — it scans all loaded game definitions and logs every item subtype not already covered by a built-in category, making it easy to identify the exact SubtypeId strings to use.
+Use `!iml refreshdefs` — it writes every item subtype not covered by any category to `iml-unknown-items.txt` in the plugin folder and prints a one-line summary to the Torch console. Check the file to identify the exact SubtypeId strings (or patterns) to add to `<CustomCategories>`.
 
-> Custom category names are case-insensitive. `IML:ADVANCEDPARTS`, `IML:AdvancedParts`, and `IML:advancedparts` all match the same category. DENY/ALLOW and all other container tags work on custom categories exactly as they do on built-in ones.
+> Custom category names are case-insensitive.
 
 ---
 
@@ -626,6 +670,12 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.4.3
+- **`!iml refreshdefs` — file output:** Instead of spamming the Torch console with one line per unknown item, the command now writes the full list to `iml-unknown-items.txt` in the plugin folder and prints a single summary line (`X unknown subtypes found — written to <path>`). The file is easy to open, search, and copy from.
+- **Wildcard SubtypeId matching in `<CustomCategories>`:** `*` (any sequence) and `?` (single character) wildcards are now supported inside `<Subtype>` entries. `Advanced*` matches all subtypes beginning with `Advanced`; `*HeavyArmor*` matches anything containing that string. Exact names and patterns can be mixed freely in the same category. Matching is case-insensitive.
+- **Per-category sort intervals (`CategorySortIntervalTicks`):** New config section lets you assign an independent sort interval to individual categories. The plugin fires a sort pass at the minimum of `AutoSortIntervalTicks` and all configured category values — a short `AMMO` interval keeps turrets stocked without shortening the global cycle for everything else.
+- **Low-stock fast rescan (`LowStockSortIntervalTicks`):** When any `MinStockThresholds` category drops below its threshold, the next sort fires at this interval (default 1 200 ticks ≈ 20 sec) rather than waiting for the full global cycle. Critical stockpiles re-stock in seconds during PvP instead of up to 2 minutes later.
 
 ### v1.4.2
 - **LCD per-conveyor-group isolation:** Each LCD panel now displays inventory totals from its own conveyor cluster only. Previously all IML-tagged containers server-wide contributed to a single aggregate, so Player A's `[IML:LCD=INGOTS]` panel would show items from Player B's unconnected INGOTS chest as well. Sorting was already correctly isolated by group; LCD stats now match.

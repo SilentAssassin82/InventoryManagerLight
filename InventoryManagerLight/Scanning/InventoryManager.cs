@@ -31,6 +31,8 @@ namespace InventoryManagerLight
         private readonly ConsumerScanner _consumerScanner;
         private readonly ConveyorScanner _conveyorScanner;
         private int _tickCounter;
+        private int _lastAutoSortTick;
+        private bool _lowStockDetected;
         private int _totalSortPasses;
         private readonly AssemblerManager _assemblerManager;
         private int _queueApplyGrace; // ticks remaining before AddQueueItem calls may fire
@@ -116,7 +118,7 @@ namespace InventoryManagerLight
                     "ContainerObject", "SeedItem", "ConsumableItem", "PhysicalItem"
                 };
 
-                var mgrType = Type.GetType("VRage.Game.MyDefinitionManager, VRage.Game");
+                var mgrType = Type.GetType("Sandbox.Definitions.MyDefinitionManager, Sandbox.Game");
                 if (mgrType == null) { result.Add("IML: Could not locate MyDefinitionManager — definitions not yet loaded?"); return result; }
                 var staticProp = mgrType.GetProperty("Static", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
                 var mgr = staticProp?.GetValue(null);
@@ -159,10 +161,7 @@ namespace InventoryManagerLight
                 {
                     result.Add($"IML: {unknown.Count} item definition(s) not covered by any category:");
                     foreach (var u in unknown)
-                    {
                         result.Add("  " + u);
-                        _logger?.Info("IML refreshdefs — uncategorised: " + u);
-                    }
                     result.Add("Add subtypes to <CustomCategories> in iml-config.xml and run !iml reload.");
                 }
             }
@@ -299,10 +298,21 @@ namespace InventoryManagerLight
             }
             catch { }
 
-            // Periodic auto-sort — runs every AutoSortIntervalTicks game ticks.
-            if (_config.AutoSortIntervalTicks > 0 && (_tickCounter % Math.Max(1, _config.AutoSortIntervalTicks)) == 0)
+            // Periodic auto-sort — effective interval is the minimum of AutoSortIntervalTicks,
+            // any per-category override in CategorySortIntervalTicks, and LowStockSortIntervalTicks
+            // when a low-stock condition was detected on the last LCD pass.
             {
-                try { TriggerSortAll(); } catch { }
+                int effectiveInterval = _config.AutoSortIntervalTicks > 0 ? _config.AutoSortIntervalTicks : int.MaxValue;
+                if (_lowStockDetected && _config.LowStockSortIntervalTicks > 0)
+                    effectiveInterval = Math.Min(effectiveInterval, _config.LowStockSortIntervalTicks);
+                foreach (var kv in _config.CategorySortIntervalTicks)
+                    if (kv.Value > 0) effectiveInterval = Math.Min(effectiveInterval, kv.Value);
+                if (effectiveInterval < int.MaxValue && (_tickCounter - _lastAutoSortTick) >= effectiveInterval)
+                {
+                    try { TriggerSortAll(); } catch { }
+                    _lastAutoSortTick = _tickCounter;
+                    _lowStockDetected = false;
+                }
             }
 
             // Assembler auto-queue scan — runs every AssemblerScanIntervalTicks game ticks.
@@ -538,7 +548,10 @@ namespace InventoryManagerLight
                     int total; groupItems.TryGetValue(cat, out total);
                     int threshold;
                     if (_config.MinStockThresholds.TryGetValue(cat, out threshold) && total < threshold)
+                    {
                         _logger?.Warn($"IML: Low stock — {cat}: {total:N0}/{threshold:N0}");
+                        _lowStockDetected = true;
+                    }
                 }
             }
 

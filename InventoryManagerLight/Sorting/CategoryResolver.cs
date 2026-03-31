@@ -17,6 +17,8 @@ namespace InventoryManagerLight
         private Dictionary<string, string[]> _rawTokens = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         // Exact-subtype map for admin-defined custom categories (SubtypeId comparison, case-insensitive).
         private Dictionary<string, HashSet<string>> _customExactSubtypes = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        // Pre-uppercased glob patterns (entries containing * or ?) per custom category.
+        private Dictionary<string, List<string>> _customWildcards = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         public CategoryResolver(RuntimeConfig config)
         {
@@ -91,22 +93,32 @@ namespace InventoryManagerLight
                 newTokens[cat] = tokens;
             }
 
-            // Build exact-subtype map for custom categories.
+            // Build exact-subtype and wildcard maps for custom categories.
             var newCustom = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var newWildcards = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in config.CustomCategories)
             {
                 if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value == null) continue;
                 var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var wc  = new List<string>();
                 foreach (var sub in kv.Value)
-                    if (!string.IsNullOrWhiteSpace(sub)) set.Add(sub.Trim());
-                if (set.Count > 0)
-                    newCustom[kv.Key] = set;
+                {
+                    if (string.IsNullOrWhiteSpace(sub)) continue;
+                    var trimmed = sub.Trim();
+                    if (trimmed.IndexOf('*') >= 0 || trimmed.IndexOf('?') >= 0)
+                        wc.Add(trimmed.ToUpperInvariant()); // store pre-uppercased for fast comparison
+                    else
+                        set.Add(trimmed);
+                }
+                if (set.Count > 0) newCustom[kv.Key]    = set;
+                if (wc.Count  > 0) newWildcards[kv.Key] = wc;
             }
 
             // Atomic swap — readers on other threads see either the old or new maps, never a torn state.
             _map = newMap;
             _rawTokens = newTokens;
             _customExactSubtypes = newCustom;
+            _customWildcards     = newWildcards;
         }
 
         public IEnumerable<VRage.Game.MyDefinitionId> Resolve(string category)
@@ -135,6 +147,18 @@ namespace InventoryManagerLight
                 if (!string.IsNullOrEmpty(subtypeStr) && subs.Contains(subtypeStr))
                     return true;
             }
+            // Custom category: wildcard pattern match against SubtypeId.
+            if (_customWildcards.TryGetValue(categoryName, out var patterns))
+            {
+                int si = itemStr.IndexOf('/');
+                var subtypeStr = si >= 0 ? itemStr.Substring(si + 1) : itemStr;
+                if (!string.IsNullOrEmpty(subtypeStr))
+                {
+                    var subtypeUpper = subtypeStr.ToUpperInvariant();
+                    foreach (var pat in patterns)
+                        if (GlobMatch(pat, 0, subtypeUpper, 0)) return true;
+                }
+            }
             if (_map.TryGetValue(categoryName, out var defs) && defs.Count > 0)
             {
                 foreach (var d in defs)
@@ -156,10 +180,34 @@ namespace InventoryManagerLight
             foreach (var k in _rawTokens.Keys) yield return k;
             foreach (var k in _customExactSubtypes.Keys)
                 if (!_rawTokens.ContainsKey(k)) yield return k;
+            foreach (var k in _customWildcards.Keys)
+                if (!_rawTokens.ContainsKey(k) && !_customExactSubtypes.ContainsKey(k)) yield return k;
         }
 
-        // Returns true if the given category is a custom (exact-subtype) category.
+        // Returns true if the given category is a custom (exact-subtype or wildcard) category.
         public bool IsCustomCategory(string categoryName) =>
-            !string.IsNullOrEmpty(categoryName) && _customExactSubtypes.ContainsKey(categoryName);
+            !string.IsNullOrEmpty(categoryName) && (_customExactSubtypes.ContainsKey(categoryName) || _customWildcards.ContainsKey(categoryName));
+
+        // Glob match: * matches any sequence, ? matches any single character. Pattern must be pre-uppercased;
+        // input must be pre-uppercased by the caller for case-insensitive comparison.
+        private static bool GlobMatch(string pat, int pi, string inp, int ii)
+        {
+            while (pi < pat.Length)
+            {
+                char c = pat[pi];
+                if (c == '*')
+                {
+                    while (pi < pat.Length && pat[pi] == '*') pi++; // collapse consecutive *
+                    if (pi == pat.Length) return true;               // trailing * matches anything
+                    for (int j = ii; j <= inp.Length; j++)
+                        if (GlobMatch(pat, pi, inp, j)) return true;
+                    return false;
+                }
+                if (ii >= inp.Length) return false;
+                if (c != '?' && c != inp[ii]) return false;
+                pi++; ii++;
+            }
+            return ii == inp.Length;
+        }
     }
 }

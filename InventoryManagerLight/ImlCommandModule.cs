@@ -131,17 +131,30 @@ namespace InventoryManagerLight
             Context.Respond($"IML: Config reloaded from {p.ConfigManager.FilePath}");
         }
 
-        [Command("refreshdefs", "Scans all loaded game definitions and logs any item subtypes not covered by a category.")]
+        [Command("refreshdefs", "Scans all loaded game definitions and writes uncategorised item subtypes to iml-unknown-items.txt.")]
         public void RefreshDefs()
         {
             var p = Plugin;
             if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
             var lines = p.Manager.GetUnknownSubtypes();
             if (lines == null || lines.Count == 0) { Context.Respond("IML: No output from definition scan."); return; }
-            var sb = new StringBuilder();
-            foreach (var line in lines)
-                sb.AppendLine(line);
-            Context.Respond(sb.ToString().TrimEnd());
+            // First line is always the summary (count or all-covered message)
+            var summary = lines.Count > 0 ? lines[0] : string.Empty;
+            // Write full list to file so the console stays quiet
+            try
+            {
+                var pluginDir = Path.GetDirectoryName(p.ConfigManager.FilePath) ?? ".";
+                var outputPath = Path.Combine(pluginDir, "iml-unknown-items.txt");
+                var sb = new StringBuilder();
+                foreach (var line in lines)
+                    sb.AppendLine(line);
+                File.WriteAllText(outputPath, sb.ToString());
+                Context.Respond($"{summary} — written to {outputPath}");
+            }
+            catch (Exception ex)
+            {
+                Context.Respond($"{summary} (file write failed: {ex.Message})");
+            }
         }
 
         [Command("tagall", "Adds an IML tag to all inventory containers on a grid. Usage: !iml tagall <gridId|name> <category>")]

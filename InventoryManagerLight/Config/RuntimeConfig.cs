@@ -129,5 +129,16 @@ namespace InventoryManagerLight
         // Example: { "MyModdedStuff": ["AdvancedSteelPlate", "HeavyArmorPlate"] }
         // Players tag containers with IML:MyModdedStuff exactly like built-in categories.
         public Dictionary<string, List<string>> CustomCategories { get; } = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        // Per-category sort interval overrides (ticks). When set, the effective auto-sort interval
+        // is the minimum of AutoSortIntervalTicks and any value in this dict, so a short value for
+        // AMMO means the whole sort fires more often — beneficial since the sort is off-thread.
+        // Example: { "AMMO": 600 } sorts approximately every 10 seconds.
+        public Dictionary<string, int> CategorySortIntervalTicks { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // When any MinStockThreshold category drops below its threshold, use this interval (ticks)
+        // instead of AutoSortIntervalTicks. Keeps critical categories topped up faster without
+        // requiring per-category config. Default: 1200 (~20 sec). Set to 0 to disable.
+        public int LowStockSortIntervalTicks { get; set; } = 1200;
     }
 }

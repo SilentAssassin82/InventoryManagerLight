@@ -395,13 +395,18 @@ IML:LCD
 
 Turns a text panel into an IML status display. Panels render using SE's native **sprite/script API** — no mods required. Each panel gets a dark background, a cyan header, coloured progress bars, and per-row alert indicators.
 
-**Visual breakdown:**
-- **Header** — cyan `[IML Status]` / `[IML: INGOTS]` title
-- **Item rows** — white item name and count; category-filtered panels include the item's in-game inventory icon as a small thumbnail
-- **Progress bar** — solid filled bar: green when healthy, amber when below threshold
-- **Alert indicator** — amber `!` drawn only on the low-stock row, not the whole panel
+**Visual breakdown — Status screen (`IML:LCD`):**
+- **Header** — cyan `[IML Status]` title
+- **Category rows** — one row per category; name + box count left, stat right-aligned (raw count, or `pct%  current/threshold` when a threshold is configured); entire row turns amber when below threshold
 - **Footer** — dimmed `Moved / Ops` transfer stats
 - **Background** — near-black, set automatically; no manual panel slider adjustment needed
+
+**Visual breakdown — Category detail screen (`IML:LCD=INGOTS` etc.):**
+- **Header** — cyan `[IML: CATEGORY]` title
+- **Split-row per subtype** — left half: item icon thumbnail + subtype name (amber + `!` when below threshold); right half: dark semi-transparent progress bar with stat text centered inside (`pct%  current/threshold` or `current/current` for untracked items)
+- **Bar fill color** — steel blue when healthy, amber when below threshold; fill and track use partial alpha for depth
+- **Footer** — dimmed `Moved / Ops` transfer stats
+- **Background** — near-black, set automatically
 
 #### Status LCD (all categories)
 
@@ -409,7 +414,7 @@ Turns a text panel into an IML status display. Panels render using SE's native *
 IML:LCD
 ```
 
-Shows all tracked categories with container counts, progress bars (when `MinStockThresholds` are configured), and transfer stats.
+Shows all tracked categories as a clean single-row-per-category list. Each row shows the category name and container count on the left with the stat right-aligned on the same line: a raw item count for untracked categories, or `pct%  current/threshold` for categories with a `MinStockThresholds` entry. The entire row turns amber when stock is below threshold. No bars appear on the Status screen — use a category detail panel for bar views.
 
 #### Category-filtered LCD
 
@@ -417,7 +422,7 @@ Shows all tracked categories with container counts, progress bars (when `MinStoc
 IML:LCD=INGOTS
 ```
 
-Shows only that category — each subtype listed with its in-game icon thumbnail and quantity, sorted by amount descending, with a separator, total line, and progress bar at the bottom. The `!` alert appears only on the total row when stock is low.
+Shows only that category — each subtype in a combined split-row layout. The left half of each row shows the item's in-game icon and name (turns amber with an `!` alert when below threshold). The right half shows a semi-transparent progress bar with the stat text centered inside it. Items without a per-subtype threshold show a full bar with `current/current`. Rows are sorted by quantity descending. A separator, total line, and footer follow.
 
 Supported values: any built-in category (`INGOTS`, `ORE`, `COMPONENTS`, `TOOLS`, `AMMO`, `BOTTLES`, `FOOD`, `WEAPONS`, `MISC`) or any custom category name you've defined in `<CustomCategories>`.
 
@@ -770,6 +775,11 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 
 ### v1.4.8
 - **Per-subtype `MinStockThresholds`:** Category keys (`INGOTS`, `AMMO`) now co-exist with subtype keys (`Platinum`, `Gold`, `Uranium`) in the same `<MinStockThresholds>` section. When a subtype key is present, IML sums that specific material across all managed containers and triggers the same alerts — `[!]` on LCD panels, amber progress bar, `[LOW]` in `!iml status`, and the `LowStockSortIntervalTicks` fast-rescan — independently of the category total. In the category detail view (`[IML:LCD=INGOTS]`) each individual subtype row also shows `[!]` when that material is below its own threshold. Both key types can be freely mixed in the same config section.
+- **LCD detail view — combined `ItemBar` row layout:** Category detail panels (`[IML:LCD=INGOTS]` etc.) now render each subtype in a single combined row instead of three stacked rows (name + bar + stat). The row is split at the horizontal midpoint: the left half shows the item icon and name (transparent background); the right half shows a progress bar with the stat text (`%  current/threshold`) centered inside it. Items without a threshold also render in this unified format with a full bar, keeping the panel visually consistent regardless of which subtypes have thresholds configured.
+- **LCD detail view — steel blue bar fill:** The bar fill color is now a cool steel blue (`100, 150, 200`) matching the metallic tone of SE's item icons, replacing the previous green. Low-stock items retain the amber fill. Both fill and background track use partial transparency (alpha 200/220 respectively) so the dark panel background bleeds through slightly, giving the bar depth.
+- **LCD detail view — amber name + alert `!` on low-stock rows:** When a subtype is below its threshold the item name text turns amber and an amber `!` is drawn flush against the bar edge on the left half, so the alert is visible even when the bar fill is very small.
+- **LCD Status screen — clean list layout, no bars:** The `[IML Status]` overview panel (no filter) now renders one row per category with the category name and box count on the left and the stat (`count` or `pct%  current/threshold`) right-aligned on the same row. Previously categories with a threshold used the wide split-bar layout and categories without a threshold used two rows (name + count below). All bars have been removed from the Status screen — bars belong in the detail views. When a category is below threshold the entire row (name and stat) renders in amber.
+- **`Item` row renderer gains right-aligned `StatText`:** The internal `Item` row type now supports an optional `StatText` field rendered right-aligned at the same vertical position as the name, using the same text color. The alert `!` falls back to its original behavior only when `StatText` is absent.
 
 ### v1.4.7
 - **`IML:MIN=CONSUMERS[=N]` moves to weapon blocks:** Each weapon block now declares its own ammo requirement in its own CustomData (`IML:MIN=NATO_25x184mm:CONSUMERS=120`). IML sums all consumer contributions from blocks in the same conveyor group and adds that total **on top of** the assembler's fixed `IML:MIN=` base stockpile. Adding a turret automatically raises the effective target with no change to the assembler tag. Using `0` as the assembler base (`IML:MIN=NATO_25x184mm:0`) gives a pure consumer-driven target with no fixed buffer. The `!iml queueall` output shows the breakdown: `target=1,600 (1,000 + 600 consumers)`.

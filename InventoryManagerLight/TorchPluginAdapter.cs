@@ -62,6 +62,8 @@ namespace InventoryManagerLight
                 _configManager = new ConfigManager(pluginDir, new NLogLogger());
                 _configManager.LoadOrCreate(_config);
                 _manager = new InventoryManager(_config);
+                // tell LcdManager where the plugin folder is (used for snapshot file output)
+                LcdManager.Instance.SetPluginDir(pluginDir);
                 // prepare command directory under plugin folder for simple admin commands
                 try
                 {

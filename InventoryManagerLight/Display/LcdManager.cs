@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 #if TORCH
 using Sandbox.ModAPI;
 using VRage.ModAPI;
@@ -20,6 +22,16 @@ namespace InventoryManagerLight
         private readonly ConcurrentQueue<LcdUpdate> _queue = new ConcurrentQueue<LcdUpdate>();
         private ILogger _logger;
         private static ILogger _pendingLogger;
+
+        #if TORCH
+        // Snapshot infrastructure — captures resolved sprites for the external layout editor.
+        private readonly ConcurrentDictionary<long, string> _pendingSnapshots = new ConcurrentDictionary<long, string>();
+        private readonly ConcurrentDictionary<long, List<MySprite>> _capturedSprites = new ConcurrentDictionary<long, List<MySprite>>();
+        private string _pluginDir;
+
+        /// <summary>Sets the plugin directory used for snapshot file output.</summary>
+        internal void SetPluginDir(string dir) { _pluginDir = dir; }
+#endif
 
         // Layout constants designed for a 512×512 surface; all values are scaled at render time.
         private const float BASE   = 512f;
@@ -109,165 +121,182 @@ namespace InventoryManagerLight
                     float bottomY = size.Y - pad - footerH;
                     bool snappedToBottom = false;
 
-                    using (var frame = surface.DrawFrame())
+                    // Build sprite list — render to frame and optionally capture for snapshot.
+                    bool capturing = _pendingSnapshots.ContainsKey(upd.EntityId);
+                    var spriteList = new List<MySprite>();
+
+                    foreach (var row in rowsToRender)
                     {
-                        foreach (var row in rowsToRender)
+                        switch (row.RowKind)
                         {
-                            switch (row.RowKind)
+                            case LcdSpriteRow.Kind.Header:
                             {
-                                case LcdSpriteRow.Kind.Header:
+                                var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.85f * sc * fs, TextAlignment.LEFT);
+                                s.Position = new Vector2(x, y);
+                                spriteList.Add(s);
+                                y += rh * 1.1f;
+                                break;
+                            }
+                            case LcdSpriteRow.Kind.Separator:
+                            {
+                                spriteList.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                    new Vector2(x + w / 2f, y + sc * fs),
+                                    new Vector2(w, Math.Max(1f, 2f * sc * fs)), new Color(55, 55, 60)));
+                                y += 6f * sc * fs;
+                                break;
+                            }
+                            case LcdSpriteRow.Kind.Item:
+                            {
+                                float tx = x;
+                                if (row.IconSprite != null)
                                 {
-                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.85f * sc * fs, TextAlignment.LEFT);
-                                    s.Position = new Vector2(x, y);
-                                    frame.Add(s);
-                                    y += rh * 1.1f;
-                                    break;
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, row.IconSprite,
+                                        new Vector2(x + iz / 2f, y + iz / 2f),
+                                        new Vector2(iz, iz), Color.White));
+                                    tx = x + iz + 4f * sc * fs;
                                 }
-                                case LcdSpriteRow.Kind.Separator:
+                                var ts = MySprite.CreateText(row.Text, "White", row.TextColor, 0.72f * sc * fs, TextAlignment.LEFT);
+                                ts.Position = new Vector2(tx, y);
+                                spriteList.Add(ts);
+                                if (row.StatText != null)
                                 {
-                                    frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
-                                        new Vector2(x + w / 2f, y + sc * fs),
-                                        new Vector2(w, Math.Max(1f, 2f * sc * fs)), new Color(55, 55, 60)));
-                                    y += 6f * sc * fs;
-                                    break;
+                                    var st = MySprite.CreateText(row.StatText, "White", row.TextColor, 0.68f * sc * fs, TextAlignment.RIGHT);
+                                    st.Position = new Vector2(x + w, y);
+                                    spriteList.Add(st);
                                 }
-                                case LcdSpriteRow.Kind.Item:
+                                else if (row.ShowAlert)
                                 {
-                                    float tx = x;
-                                    if (row.IconSprite != null)
-                                    {
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, row.IconSprite,
-                                            new Vector2(x + iz / 2f, y + iz / 2f),
-                                            new Vector2(iz, iz), Color.White));
-                                        tx = x + iz + 4f * sc * fs;
-                                    }
-                                    var ts = MySprite.CreateText(row.Text, "White", row.TextColor, 0.72f * sc * fs, TextAlignment.LEFT);
-                                    ts.Position = new Vector2(tx, y);
-                                    frame.Add(ts);
-                                    if (row.StatText != null)
-                                    {
-                                        var st = MySprite.CreateText(row.StatText, "White", row.TextColor, 0.68f * sc * fs, TextAlignment.RIGHT);
-                                        st.Position = new Vector2(x + w, y);
-                                        frame.Add(st);
-                                    }
-                                    else if (row.ShowAlert)
-                                    {
-                                        float badgeSz = rh * 0.82f;
-                                        float bx = x + w - badgeSz * 0.5f;
-                                        float by = y + rh * 0.5f - badgeSz * 1.03f;
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
-                                            new Vector2(bx, by), new Vector2(badgeSz, badgeSz), new Color(220, 30, 0)));
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
-                                            new Vector2(bx, by + badgeSz * 0.06f), new Vector2(badgeSz * 0.70f, badgeSz * 0.70f), new Color(6, 6, 8)));
-                                        var al = MySprite.CreateText("!", "White", new Color(220, 30, 0), 0.75f * sc * fs, TextAlignment.CENTER);
-                                        al.Position = new Vector2(bx, by - badgeSz * 0.33f);
-                                        frame.Add(al);
-                                    }
-                                    y += rh;
-                                    break;
+                                    float badgeSz = rh * 0.82f;
+                                    float bx = x + w - badgeSz * 0.5f;
+                                    float by = y + rh * 0.5f - badgeSz * 1.03f;
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                        new Vector2(bx, by), new Vector2(badgeSz, badgeSz), new Color(220, 30, 0)));
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                        new Vector2(bx, by + badgeSz * 0.06f), new Vector2(badgeSz * 0.70f, badgeSz * 0.70f), new Color(6, 6, 8)));
+                                    var al = MySprite.CreateText("!", "White", new Color(220, 30, 0), 0.75f * sc * fs, TextAlignment.CENTER);
+                                    al.Position = new Vector2(bx, by - badgeSz * 0.33f);
+                                    spriteList.Add(al);
                                 }
-                                case LcdSpriteRow.Kind.Bar:
-                                {
-                                    float fill  = Math.Max(0f, Math.Min(1f, row.BarFill));
-                                    float fillW = fill * w;
-                                    if (fillW > 1f)
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
-                                            new Vector2(x + fillW / 2f, y + bh / 2f),
-                                            new Vector2(fillW, bh), row.BarFillColor));
-                                    if (fillW < w - 1f)
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
-                                            new Vector2(x + fillW + (w - fillW) / 2f, y + bh / 2f),
-                                            new Vector2(w - fillW, bh), new Color(35, 35, 40)));
-                                    y += bh + 4f * sc * fs;
-                                    break;
-                                }
-                                case LcdSpriteRow.Kind.ItemBar:
-                                {
-                                    float rowH  = rh * 1.15f;
-                                    float halfX = x + w / 2f; // bar starts at horizontal midpoint
-                                    float barW  = w / 2f;
+                                y += rh;
+                                break;
+                            }
+                            case LcdSpriteRow.Kind.Bar:
+                            {
+                                float fill  = Math.Max(0f, Math.Min(1f, row.BarFill));
+                                float fillW = fill * w;
+                                if (fillW > 1f)
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                        new Vector2(x + fillW / 2f, y + bh / 2f),
+                                        new Vector2(fillW, bh), row.BarFillColor));
+                                if (fillW < w - 1f)
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                        new Vector2(x + fillW + (w - fillW) / 2f, y + bh / 2f),
+                                        new Vector2(w - fillW, bh), new Color(35, 35, 40)));
+                                y += bh + 4f * sc * fs;
+                                break;
+                            }
+                            case LcdSpriteRow.Kind.ItemBar:
+                            {
+                                float rowH  = rh * 1.15f;
+                                float halfX = x + w / 2f; // bar starts at horizontal midpoint
+                                float barW  = w / 2f;
 
-                                    // Left half: icon + name (no background, transparent)
-                                    float tx = x + 4f * sc * fs;
-                                    if (row.IconSprite != null)
-                                    {
-                                        float isz = iz * 0.85f;
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, row.IconSprite,
-                                            new Vector2(x + isz / 2f + 3f * sc * fs, y + rowH / 2f),
-                                            new Vector2(isz, isz), Color.White));
-                                        tx = x + isz + 7f * sc * fs;
-                                    }
-                                    float ty = y + rowH * 0.12f;
-                                    var nameColor = row.ShowAlert ? new Color(255, 160, 0) : Color.White;
-                                    var lt = MySprite.CreateText(row.Text ?? "", "White", nameColor, 0.68f * sc * fs, TextAlignment.LEFT);
-                                    lt.Position = new Vector2(tx, ty);
-                                    frame.Add(lt);
-                                    // Alert warning-triangle left of bar edge
-                                    if (row.ShowAlert)
-                                    {
-                                        float badgeSz = rowH * 0.88f;
-                                        float bx = halfX - 5f * sc * fs - badgeSz * 0.5f;
-                                        float by = y + rowH * 0.5f - badgeSz * 0.03f;
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
-                                            new Vector2(bx, by), new Vector2(badgeSz, badgeSz), new Color(220, 30, 0)));
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
-                                            new Vector2(bx, by + badgeSz * 0.06f), new Vector2(badgeSz * 0.70f, badgeSz * 0.70f), new Color(6, 6, 8)));
-                                        var al = MySprite.CreateText("!", "White", new Color(220, 30, 0), 0.75f * sc * fs, TextAlignment.CENTER);
-                                        al.Position = new Vector2(bx, by + badgeSz * -0.33f);
-                                        frame.Add(al);
-                                    }
+                                // Left half: icon + name (no background, transparent)
+                                float tx = x + 4f * sc * fs;
+                                if (row.IconSprite != null)
+                                {
+                                    float isz = iz * 0.85f;
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, row.IconSprite,
+                                        new Vector2(x + isz / 2f + 3f * sc * fs, y + rowH / 2f),
+                                        new Vector2(isz, isz), Color.White));
+                                    tx = x + isz + 7f * sc * fs;
+                                }
+                                float ty = y + rowH * 0.12f;
+                                var nameColor = row.ShowAlert ? new Color(255, 160, 0) : Color.White;
+                                var lt = MySprite.CreateText(row.Text ?? "", "White", nameColor, 0.68f * sc * fs, TextAlignment.LEFT);
+                                lt.Position = new Vector2(tx, ty);
+                                spriteList.Add(lt);
+                                // Alert warning-triangle left of bar edge
+                                if (row.ShowAlert)
+                                {
+                                    float badgeSz = rowH * 0.88f;
+                                    float bx = halfX - 5f * sc * fs - badgeSz * 0.5f;
+                                    float by = y + rowH * 0.5f - badgeSz * 0.03f;
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                        new Vector2(bx, by), new Vector2(badgeSz, badgeSz), new Color(220, 30, 0)));
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                        new Vector2(bx, by + badgeSz * 0.06f), new Vector2(badgeSz * 0.70f, badgeSz * 0.70f), new Color(6, 6, 8)));
+                                    var al = MySprite.CreateText("!", "White", new Color(220, 30, 0), 0.75f * sc * fs, TextAlignment.CENTER);
+                                    al.Position = new Vector2(bx, by + badgeSz * -0.33f);
+                                    spriteList.Add(al);
+                                }
 
-                                    // Right half: bar with stat text centered inside
-                                    float fill  = Math.Max(0f, Math.Min(1f, row.BarFill));
-                                    float fillW = fill * barW;
-                                    var fc = row.BarFillColor;
-                                    var fillColor = new Color((int)(fc.R * 0.45f), (int)(fc.G * 0.45f), (int)(fc.B * 0.45f), 200);
-                                    // Background track
-                                    frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
-                                        new Vector2(halfX + barW / 2f, y + rowH / 2f),
-                                        new Vector2(barW, rowH), new Color(30, 30, 35, 220)));
-                                    // Fill
-                                    if (fillW > 1f)
-                                        frame.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
-                                            new Vector2(halfX + fillW / 2f, y + rowH / 2f),
-                                            new Vector2(fillW, rowH), fillColor));
-                                    // Stat text centered inside the bar
-                                    if (row.StatText != null)
-                                    {
-                                        var rt = MySprite.CreateText(row.StatText, "White", Color.White, 0.62f * sc * fs, TextAlignment.CENTER);
-                                        rt.Position = new Vector2(halfX + barW / 2f, ty);
-                                        frame.Add(rt);
-                                    }
-                                    y += rowH + 2f * sc * fs;
-                                    break;
-                                }
-                                case LcdSpriteRow.Kind.Stat:
+                                // Right half: bar with stat text centered inside
+                                float fill  = Math.Max(0f, Math.Min(1f, row.BarFill));
+                                float fillW = fill * barW;
+                                var fc = row.BarFillColor;
+                                var fillColor = new Color((int)(fc.R * 0.45f), (int)(fc.G * 0.45f), (int)(fc.B * 0.45f), 200);
+                                // Background track
+                                spriteList.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                    new Vector2(halfX + barW / 2f, y + rowH / 2f),
+                                    new Vector2(barW, rowH), new Color(30, 30, 35, 220)));
+                                // Fill
+                                if (fillW > 1f)
+                                    spriteList.Add(new MySprite(SpriteType.TEXTURE, "SquareSimple",
+                                        new Vector2(halfX + fillW / 2f, y + rowH / 2f),
+                                        new Vector2(fillW, rowH), fillColor));
+                                // Stat text centered inside the bar
+                                if (row.StatText != null)
                                 {
-                                    var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.68f * sc * fs, TextAlignment.LEFT);
-                                    s.Position = new Vector2(x, y);
-                                    frame.Add(s);
-                                    y += rh * 0.9f;
-                                    break;
+                                    var rt = MySprite.CreateText(row.StatText, "White", Color.White, 0.62f * sc * fs, TextAlignment.CENTER);
+                                    rt.Position = new Vector2(halfX + barW / 2f, ty);
+                                    spriteList.Add(rt);
                                 }
-                                case LcdSpriteRow.Kind.Footer:
+                                y += rowH + 2f * sc * fs;
+                                break;
+                            }
+                            case LcdSpriteRow.Kind.Stat:
+                            {
+                                var s = MySprite.CreateText(row.Text, "White", row.TextColor, 0.68f * sc * fs, TextAlignment.LEFT);
+                                s.Position = new Vector2(x, y);
+                                spriteList.Add(s);
+                                y += rh * 0.9f;
+                                break;
+                            }
+                            case LcdSpriteRow.Kind.Footer:
+                            {
+                                if (!snappedToBottom) { y = Math.Max(y, bottomY); snappedToBottom = true; }
+                                var textColor = row.TextColor.A > 0 ? row.TextColor : new Color(110, 110, 115);
+                                var s = MySprite.CreateText(row.Text ?? "", "White", textColor, 0.6f * sc * fs, TextAlignment.LEFT);
+                                s.Position = new Vector2(x, y);
+                                spriteList.Add(s);
+                                if (row.StatText != null)
                                 {
-                                    if (!snappedToBottom) { y = Math.Max(y, bottomY); snappedToBottom = true; }
-                                    var textColor = row.TextColor.A > 0 ? row.TextColor : new Color(110, 110, 115);
-                                    var s = MySprite.CreateText(row.Text ?? "", "White", textColor, 0.6f * sc * fs, TextAlignment.LEFT);
-                                    s.Position = new Vector2(x, y);
-                                    frame.Add(s);
-                                    if (row.StatText != null)
-                                    {
-                                        var st = MySprite.CreateText(row.StatText, "White", textColor, 0.6f * sc * fs, TextAlignment.RIGHT);
-                                        st.Position = new Vector2(x + w, y);
-                                        frame.Add(st);
-                                    }
-                                    y += rh * 0.85f;
-                                    break;
+                                    var st = MySprite.CreateText(row.StatText, "White", textColor, 0.6f * sc * fs, TextAlignment.RIGHT);
+                                    st.Position = new Vector2(x + w, y);
+                                    spriteList.Add(st);
                                 }
+                                y += rh * 0.85f;
+                                break;
                             }
                         }
                     }
+
+                    // Flush to frame
+                    using (var frame = surface.DrawFrame())
+                    {
+                        foreach (var spr in spriteList)
+                            frame.Add(spr);
+                    }
+
+                    // Capture for snapshot if requested — auto-write to file
+                    if (capturing)
+                    {
+                        SnapshotCollect(upd.EntityId, spriteList);
+                        if (!string.IsNullOrEmpty(_pluginDir))
+                            SnapshotLcd(upd.EntityId, _pluginDir);
+                    }
+
                     _logger?.Debug($"LCD {upd.EntityId}: drew {upd.Rows.Length} rows alert={upd.IsAlert}");
                 }
                 catch (Exception ex)
@@ -404,6 +433,118 @@ namespace InventoryManagerLight
             foreach (var idx in pages[currentPage]) result.Add(rows[idx]);
             for (int i = suffixStart; i < rows.Length; i++) result.Add(rows[i]);
             return result.ToArray();
+        }
+
+        // ── Snapshot helpers (for external SE sprite layout editor) ──────────────
+
+        /// <summary>
+        /// Requests a snapshot of the resolved sprites the next time the given LCD entity is rendered.
+        /// <paramref name="label"/> is used as the output file name stem.
+        /// </summary>
+        internal void RequestSnapshot(long lcdEntityId, string label)
+        {
+            _pendingSnapshots[lcdEntityId] = label ?? "snapshot";
+            _logger?.Info($"Snapshot requested for LCD {lcdEntityId} label='{label}'");
+        }
+
+        /// <summary>
+        /// Called inside the draw loop after all sprites are added to the frame.
+        /// If a snapshot is pending for this entity, captures the sprite list.
+        /// </summary>
+        private void SnapshotCollect(long entityId, List<MySprite> sprites)
+        {
+            if (!_pendingSnapshots.ContainsKey(entityId)) return;
+            _capturedSprites[entityId] = new List<MySprite>(sprites);
+        }
+
+        /// <summary>
+        /// Serialises the captured sprites into literal C# <c>new MySprite { ... }</c> code.
+        /// Position/Size Vector2 values are stripped so the layout editor can re-resolve them.
+        /// </summary>
+        private string SerializeSnapshot(long entityId)
+        {
+            List<MySprite> sprites;
+            if (!_capturedSprites.TryGetValue(entityId, out sprites) || sprites.Count == 0)
+                return "// No sprites captured.";
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"// Snapshot: {sprites.Count} sprite(s)");
+            sb.AppendLine($"// Captured: {DateTime.UtcNow:u}");
+            sb.AppendLine();
+            sb.AppendLine("var sprites = new List<MySprite>");
+            sb.AppendLine("{");
+            for (int i = 0; i < sprites.Count; i++)
+            {
+                var s = sprites[i];
+                sb.AppendLine("    new MySprite");
+                sb.AppendLine("    {");
+                sb.AppendLine($"        Type = SpriteType.{s.Type},");
+                if (!string.IsNullOrEmpty(s.Data))
+                    sb.AppendLine($"        Data = \"{s.Data}\",");
+                if (s.Position.HasValue)
+                    sb.AppendLine($"        Position = new Vector2({s.Position.Value.X:F1}f, {s.Position.Value.Y:F1}f),");
+                if (s.Size.HasValue)
+                    sb.AppendLine($"        Size = new Vector2({s.Size.Value.X:F1}f, {s.Size.Value.Y:F1}f),");
+                if (s.Color.HasValue)
+                {
+                    var c = s.Color.Value;
+                    sb.AppendLine($"        Color = new Color({c.R}, {c.G}, {c.B}, {c.A}),");
+                }
+                if (!string.IsNullOrEmpty(s.FontId))
+                    sb.AppendLine($"        FontId = \"{s.FontId}\",");
+                if (s.Alignment != TextAlignment.LEFT)
+                    sb.AppendLine($"        Alignment = TextAlignment.{s.Alignment},");
+                if (Math.Abs(s.RotationOrScale - 1f) > 0.001f)
+                    sb.AppendLine($"        RotationOrScale = {s.RotationOrScale:F4}f,");
+                sb.AppendLine("    },");
+            }
+            sb.AppendLine("};");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Writes the snapshot to a .cs file in the plugin folder and logs to NLog.
+        /// Call from a chat command handler after the next render pass has run.
+        /// </summary>
+        internal string SnapshotLcd(long entityId, string pluginDir)
+        {
+            string label;
+            _pendingSnapshots.TryRemove(entityId, out label);
+            label = label ?? "snapshot";
+
+            var code = SerializeSnapshot(entityId);
+
+            // Clean up captured data
+            List<MySprite> removed;
+            _capturedSprites.TryRemove(entityId, out removed);
+
+            // Write to file
+            try
+            {
+                var safeName = label.Replace(' ', '_').Replace('\\', '_').Replace('/', '_');
+                var fileName = $"iml-snapshot-{safeName}-{DateTime.Now:yyyyMMdd-HHmmss}.cs";
+                var filePath = Path.Combine(pluginDir, fileName);
+                File.WriteAllText(filePath, code);
+                _logger?.Info($"Snapshot written to {filePath}");
+                return filePath;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error($"Snapshot file write failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>Returns true if there is a pending (not yet rendered) snapshot for the given entity.</summary>
+        internal bool HasPendingSnapshot(long entityId)
+        {
+            return _pendingSnapshots.ContainsKey(entityId);
+        }
+
+        /// <summary>Returns true if a snapshot has been captured and is ready to serialise.</summary>
+        internal bool HasCapturedSnapshot(long entityId)
+        {
+            return _capturedSprites.ContainsKey(entityId);
         }
 #endif
     }

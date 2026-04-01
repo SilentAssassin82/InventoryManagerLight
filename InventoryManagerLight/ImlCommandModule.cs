@@ -2,8 +2,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Torch.Commands;
+using Sandbox.ModAPI;
+using VRage.ModAPI;
+using VRage.Game.ModAPI;
 
 namespace InventoryManagerLight
 {
@@ -201,6 +205,57 @@ namespace InventoryManagerLight
             var sb = new StringBuilder();
             foreach (var line in lines) sb.AppendLine(line);
             Context.Respond(sb.ToString().TrimEnd());
+        }
+
+        [Command("snapshot", "Captures the resolved sprites from an IML LCD panel and writes them to a .cs file. Usage: !iml snapshot <LCD block name>")]
+        public void Snapshot(string lcdName = null)
+        {
+            var p = Plugin;
+            if (p?.Manager == null) { Context.Respond("IML: Plugin not ready."); return; }
+            if (string.IsNullOrWhiteSpace(lcdName))
+            {
+                Context.Respond("IML: Usage: !iml snapshot <LCD block name>\nFinds a text panel by name and captures its sprites on the next render pass.\nThe output .cs file is written to the plugin folder.");
+                return;
+            }
+
+            // Search all grids for a text panel whose CustomName contains the given string
+            var entities = new HashSet<IMyEntity>();
+            MyAPIGateway.Entities.GetEntities(entities);
+            IMyTextPanel foundPanel = null;
+            string foundName = null;
+
+            foreach (var ent in entities)
+            {
+                var grid = ent as IMyCubeGrid;
+                if (grid == null) continue;
+                var blocks = new List<IMySlimBlock>();
+                grid.GetBlocks(blocks, b => b.FatBlock is IMyTextPanel);
+                foreach (var slim in blocks)
+                {
+                    var panel = slim.FatBlock as IMyTextPanel;
+                    if (panel == null) continue;
+                    if (panel.CustomName != null &&
+                        panel.CustomName.IndexOf(lcdName, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        foundPanel = panel;
+                        foundName = panel.CustomName;
+                        break;
+                    }
+                }
+                if (foundPanel != null) break;
+            }
+
+            if (foundPanel == null)
+            {
+                Context.Respond($"IML: No text panel found with name containing '{lcdName}'.\nMake sure the panel exists and is on a powered grid.");
+                return;
+            }
+
+            // Request snapshot — will be captured on the next LcdManager render pass
+            LcdManager.Instance.RequestSnapshot(foundPanel.EntityId, foundName);
+            Context.Respond($"IML: Snapshot requested for '{foundName}' (entity {foundPanel.EntityId}).\n" +
+                            $"The sprite capture will be written to the plugin folder on the next LCD update (~5 sec).\n" +
+                            $"Check the Torch log for the output file path.");
         }
         }
     }

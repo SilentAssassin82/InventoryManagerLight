@@ -102,6 +102,13 @@ namespace InventoryManagerLight
                     float y    = pad;
                     float w    = size.X - 2f * pad;
 
+                    // Pre-calculate snap-to-bottom Y for trailing Footer rows.
+                    float footerH = 0f;
+                    for (int i = rowsToRender.Length - 1; i >= 0 && rowsToRender[i].RowKind == LcdSpriteRow.Kind.Footer; i--)
+                        footerH += GetRowHeightBase(LcdSpriteRow.Kind.Footer) * sc * fs;
+                    float bottomY = size.Y - pad - footerH;
+                    bool snappedToBottom = false;
+
                     using (var frame = surface.DrawFrame())
                     {
                         foreach (var row in rowsToRender)
@@ -230,9 +237,17 @@ namespace InventoryManagerLight
                                 }
                                 case LcdSpriteRow.Kind.Footer:
                                 {
-                                    var s = MySprite.CreateText(row.Text, "White", new Color(110, 110, 115), 0.6f * sc * fs, TextAlignment.LEFT);
+                                    if (!snappedToBottom) { y = Math.Max(y, bottomY); snappedToBottom = true; }
+                                    var textColor = row.TextColor.A > 0 ? row.TextColor : new Color(110, 110, 115);
+                                    var s = MySprite.CreateText(row.Text ?? "", "White", textColor, 0.6f * sc * fs, TextAlignment.LEFT);
                                     s.Position = new Vector2(x, y);
                                     frame.Add(s);
+                                    if (row.StatText != null)
+                                    {
+                                        var st = MySprite.CreateText(row.StatText, "White", textColor, 0.6f * sc * fs, TextAlignment.RIGHT);
+                                        st.Position = new Vector2(x + w, y);
+                                        frame.Add(st);
+                                    }
                                     y += rh * 0.85f;
                                     break;
                                 }

@@ -757,14 +757,7 @@ namespace InventoryManagerLight
                     int threshold;
                     bool isLow = _config.MinStockThresholds.TryGetValue(filter, out threshold) && total < threshold;
                     if (isLow) isAlert = true;
-                    if (threshold > 0)
-                    {
-                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer, Text = "Total", StatText = $"{total:N0}/{threshold:N0}", TextColor = isLow ? amber : white });
-                    }
-                    else
-                    {
-                        rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer, Text = "Total", StatText = $"{total:N0}", TextColor = white });
-                    }
+                    rows.Add(new LcdSpriteRow { RowKind = LcdSpriteRow.Kind.Footer, Text = $"Total  {total:N0}", TextColor = isLow ? amber : white });
                 }
                 else
                 {

@@ -2,7 +2,7 @@
 
 A lightweight Torch plugin for Space Engineers that automatically sorts and distributes items across containers, **off the game thread** — so your server keeps running smoothly while inventory work happens in the background.
 
-> **Version:** 1.4.8  
+> **Version:** 1.5.0  
 > **Author:** Chris  
 > **Plugin GUID:** `50bc17bd-b3d6-4da8-b332-c62e569f909c`  
 > **Repository:** https://github.com/SilentAssassin82/InventoryManagerLight
@@ -772,6 +772,9 @@ Open an issue at: https://github.com/SilentAssassin82/InventoryManagerLight
 ---
 
 ## Changelog
+
+### v1.5.0
+- **Alert badge `!` centering fix:** The `!` exclamation mark inside warning-triangle alert badges on LCD panels was rendering inside the dark inner-triangle cutout, making it invisible or clipped. Repositioned the `!` text sprite to sit above the inner triangle's top edge (offset `-0.33× badge size`) where it is fully visible against the red outer triangle regardless of scale. Applies to both `Item` rows (right-edge badge) and `ItemBar` rows (badge left of the progress bar). Font scale normalised to `0.75` on both row types for consistent sizing.
 
 ### v1.4.8
 - **Per-subtype `MinStockThresholds`:** Category keys (`INGOTS`, `AMMO`) now co-exist with subtype keys (`Platinum`, `Gold`, `Uranium`) in the same `<MinStockThresholds>` section. When a subtype key is present, IML sums that specific material across all managed containers and triggers the same alerts — `[!]` on LCD panels, amber progress bar, `[LOW]` in `!iml status`, and the `LowStockSortIntervalTicks` fast-rescan — independently of the category total. In the category detail view (`[IML:LCD=INGOTS]`) each individual subtype row also shows `[!]` when that material is below its own threshold. Both key types can be freely mixed in the same config section.

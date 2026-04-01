@@ -152,8 +152,15 @@ namespace InventoryManagerLight
                                     }
                                     else if (row.ShowAlert)
                                     {
-                                        var al = MySprite.CreateText("!", "White", new Color(255, 140, 0), 0.85f * sc * fs, TextAlignment.RIGHT);
-                                        al.Position = new Vector2(x + w, y);
+                                        float badgeSz = rh * 0.82f;
+                                        float bx = x + w - badgeSz * 0.5f;
+                                        float by = y + rh * 0.5f - badgeSz * 1.03f;
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                            new Vector2(bx, by), new Vector2(badgeSz, badgeSz), new Color(220, 30, 0)));
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                            new Vector2(bx, by + badgeSz * 0.06f), new Vector2(badgeSz * 0.70f, badgeSz * 0.70f), new Color(6, 6, 8)));
+                                        var al = MySprite.CreateText("!", "White", new Color(220, 30, 0), 0.75f * sc * fs, TextAlignment.CENTER);
+                                        al.Position = new Vector2(bx, by - badgeSz * 0.33f);
                                         frame.Add(al);
                                     }
                                     y += rh;
@@ -195,11 +202,18 @@ namespace InventoryManagerLight
                                     var lt = MySprite.CreateText(row.Text ?? "", "White", nameColor, 0.68f * sc * fs, TextAlignment.LEFT);
                                     lt.Position = new Vector2(tx, ty);
                                     frame.Add(lt);
-                                    // Alert "!" right-aligned against the bar edge
+                                    // Alert warning-triangle left of bar edge
                                     if (row.ShowAlert)
                                     {
-                                        var al = MySprite.CreateText("!", "White", new Color(255, 160, 0), 0.78f * sc * fs, TextAlignment.RIGHT);
-                                        al.Position = new Vector2(halfX - 3f * sc * fs, ty);
+                                        float badgeSz = rowH * 0.88f;
+                                        float bx = halfX - 5f * sc * fs - badgeSz * 0.5f;
+                                        float by = y + rowH * 0.5f - badgeSz * 0.03f;
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                            new Vector2(bx, by), new Vector2(badgeSz, badgeSz), new Color(220, 30, 0)));
+                                        frame.Add(new MySprite(SpriteType.TEXTURE, "Triangle",
+                                            new Vector2(bx, by + badgeSz * 0.06f), new Vector2(badgeSz * 0.70f, badgeSz * 0.70f), new Color(6, 6, 8)));
+                                        var al = MySprite.CreateText("!", "White", new Color(220, 30, 0), 0.75f * sc * fs, TextAlignment.CENTER);
+                                        al.Position = new Vector2(bx, by + badgeSz * -0.33f);
                                         frame.Add(al);
                                     }
 

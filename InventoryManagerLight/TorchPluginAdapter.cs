@@ -57,6 +57,8 @@ namespace InventoryManagerLight
                 // resolve plugin directory once — used for both config file and command dir
                 string pluginDir = ".";
                 try { pluginDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "."; } catch { }
+                if (string.IsNullOrEmpty(pluginDir)) pluginDir = ".";
+                try { new NLogLogger().Info($"IML: pluginDir resolved to '{Path.GetFullPath(pluginDir)}'"); } catch { }
                 // load (or create) iml-config.xml before constructing the manager
                 _config = new RuntimeConfig();
                 _configManager = new ConfigManager(pluginDir, new NLogLogger());

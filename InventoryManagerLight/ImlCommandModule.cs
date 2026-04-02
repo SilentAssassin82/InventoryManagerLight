@@ -251,11 +251,27 @@ namespace InventoryManagerLight
                 return;
             }
 
-            // Request snapshot — will be captured on the next LcdManager render pass
+            // Request snapshot and immediately force an LCD refresh so the capture
+            // happens synchronously — no need to wait for the next scan cycle.
             LcdManager.Instance.RequestSnapshot(foundPanel.EntityId, foundName);
-            Context.Respond($"IML: Snapshot requested for '{foundName}' (entity {foundPanel.EntityId}).\n" +
-                            $"The sprite capture will be written to the plugin folder on the next LCD update (~5 sec).\n" +
-                            $"Check the Torch log for the output file path.");
+            p.Manager.ForceUpdateLcdPanels();
+
+            // Check if the snapshot was actually captured (panel must be IML:LCD tagged)
+            if (LcdManager.Instance.HasPendingSnapshot(foundPanel.EntityId))
+            {
+                // Still pending — the panel wasn't in the LCD update cycle (not IML:LCD tagged)
+                Context.Respond($"IML: Panel '{foundName}' was found but is not tagged with [IML:LCD].\n" +
+                                $"Add IML:LCD to the panel's name or CustomData, then try again.\n" +
+                                $"Example name: '{foundName} [IML:LCD]'");
+            }
+            else
+            {
+                var path = LcdManager.Instance.LastSnapshotPath;
+                if (!string.IsNullOrEmpty(path))
+                    Context.Respond($"IML: Snapshot written to:\n{path}");
+                else
+                    Context.Respond($"IML: Snapshot captured for '{foundName}' but file write may have failed — check the Torch log.");
+            }
         }
         }
     }

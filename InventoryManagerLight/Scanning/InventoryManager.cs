@@ -435,6 +435,13 @@ namespace InventoryManagerLight
             return grid.EntityId;
         }
 
+        // Forces an immediate LCD refresh — scans inventory, builds sprites, and applies updates.
+        // Called by the snapshot command so the capture happens synchronously.
+        public void ForceUpdateLcdPanels()
+        {
+            UpdateLcdPanels();
+        }
+
         // Scan all terminal blocks once: collect category stats from managed containers and
         // find LCD panels tagged [IML:LCD] or [IML:LCD=CATEGORY], then write to each panel.
         private void UpdateLcdPanels()

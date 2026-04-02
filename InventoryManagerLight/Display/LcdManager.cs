@@ -28,6 +28,10 @@ namespace InventoryManagerLight
         private readonly ConcurrentDictionary<long, string> _pendingSnapshots = new ConcurrentDictionary<long, string>();
         private readonly ConcurrentDictionary<long, List<MySprite>> _capturedSprites = new ConcurrentDictionary<long, List<MySprite>>();
         private string _pluginDir;
+        private string _lastSnapshotPath;
+
+        /// <summary>Returns the full file path of the most recent snapshot written, or null if none.</summary>
+        internal string LastSnapshotPath => _lastSnapshotPath;
 
         /// <summary>Sets the plugin directory used for snapshot file output.</summary>
         internal void SetPluginDir(string dir) { _pluginDir = dir; }
@@ -294,7 +298,7 @@ namespace InventoryManagerLight
                     {
                         SnapshotCollect(upd.EntityId, spriteList);
                         if (!string.IsNullOrEmpty(_pluginDir))
-                            SnapshotLcd(upd.EntityId, _pluginDir);
+                            _lastSnapshotPath = SnapshotLcd(upd.EntityId, _pluginDir);
                     }
 
                     _logger?.Debug($"LCD {upd.EntityId}: drew {upd.Rows.Length} rows alert={upd.IsAlert}");
@@ -521,7 +525,9 @@ namespace InventoryManagerLight
             // Write to file
             try
             {
-                var safeName = label.Replace(' ', '_').Replace('\\', '_').Replace('/', '_');
+                var safeName = label.Replace(' ', '_').Replace('\\', '_').Replace('/', '_')
+                                    .Replace(':', '_').Replace('*', '_').Replace('?', '_')
+                                    .Replace('"', '_').Replace('<', '_').Replace('>', '_').Replace('|', '_');
                 var fileName = $"iml-snapshot-{safeName}-{DateTime.Now:yyyyMMdd-HHmmss}.cs";
                 var filePath = Path.Combine(pluginDir, fileName);
                 File.WriteAllText(filePath, code);

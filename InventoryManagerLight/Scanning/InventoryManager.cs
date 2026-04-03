@@ -436,10 +436,12 @@ namespace InventoryManagerLight
         }
 
         // Forces an immediate LCD refresh — scans inventory, builds sprites, and applies updates.
-        // Called by the snapshot command so the capture happens synchronously.
+        // Called by the snapshot command so the capture happens synchronously on the game thread.
         public void ForceUpdateLcdPanels()
         {
             UpdateLcdPanels();
+            // Drain the queue immediately so the snapshot is captured before the command checks for it.
+            LcdManager.Instance.ApplyPendingUpdates();
         }
 
         // Scan all terminal blocks once: collect category stats from managed containers and

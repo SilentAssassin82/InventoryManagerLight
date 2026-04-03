@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 #if TORCH
+using System.IO.Pipes;
 using Sandbox.ModAPI;
 using VRage.ModAPI;
 using VRage.Game.GUI.TextPanel;
@@ -27,6 +28,13 @@ namespace InventoryManagerLight
         // Snapshot infrastructure — captures resolved sprites for the external layout editor.
         private readonly ConcurrentDictionary<long, string> _pendingSnapshots = new ConcurrentDictionary<long, string>();
         private readonly ConcurrentDictionary<long, List<MySprite>> _capturedSprites = new ConcurrentDictionary<long, List<MySprite>>();
+        // File-based live stream state (per entity; each LCD can have its own watched file)
+        private readonly ConcurrentDictionary<long, LiveFeedState> _liveFeeds = new ConcurrentDictionary<long, LiveFeedState>();
+        // Named-pipe live stream state (single global connection filtered to one entity)
+        private NamedPipeClientStream _lcdPipe;
+        private DateTime              _lcdStreamExpiry;
+        private bool                  _lcdStreamActive;
+        private long                  _lcdPipeEntityId;
         private string _pluginDir;
         private string _lastSnapshotPath;
 
@@ -301,6 +309,20 @@ namespace InventoryManagerLight
                             _lastSnapshotPath = SnapshotLcd(upd.EntityId, _pluginDir);
                     }
 
+                    // Named-pipe live stream — sends frame to layout tool if listening
+                    if (_lcdStreamActive && upd.EntityId == _lcdPipeEntityId)
+                        StreamFrame(upd.EntityId, spriteList);
+
+                    // File-based live stream — overwrites watched file on every tick
+                    LiveFeedState liveState;
+                    if (_liveFeeds.TryGetValue(upd.EntityId, out liveState))
+                    {
+                        if ((DateTime.UtcNow - liveState.StartTime).TotalSeconds <= liveState.DurationSecs)
+                            WriteLiveFeed(upd.EntityId, spriteList, liveState);
+                        else
+                            StopLiveFeed(upd.EntityId);
+                    }
+
                     _logger?.Debug($"LCD {upd.EntityId}: drew {upd.Rows.Length} rows alert={upd.IsAlert}");
                 }
                 catch (Exception ex)
@@ -329,9 +351,9 @@ namespace InventoryManagerLight
 
 #if TORCH
         // When shrink-to-fit would scale below this factor, paginate instead.
-        private const float  PAGE_FS_THRESHOLD  = 0.65f;
+        private const float  PAGE_FS_THRESHOLD  = 0.92f;
         // Seconds each page is shown before advancing to the next.
-        private const double PAGE_INTERVAL_SECS = 8.0;
+        private const double PAGE_INTERVAL_SECS = 20.0;
         private readonly Dictionary<long, PageState> _pageStates = new Dictionary<long, PageState>();
 
         private class PageState
@@ -339,6 +361,13 @@ namespace InventoryManagerLight
             public int      PageIndex;
             public DateTime LastFlip;
             public PageState() { LastFlip = DateTime.UtcNow; }
+        }
+
+        private class LiveFeedState
+        {
+            public string   FilePath;
+            public DateTime StartTime;
+            public double   DurationSecs;
         }
 
         // Returns the BASE-unit height contributed by a single row of the given kind.
@@ -462,48 +491,45 @@ namespace InventoryManagerLight
         }
 
         /// <summary>
-        /// Serialises the captured sprites into literal C# <c>new MySprite { ... }</c> code.
-        /// Position/Size Vector2 values are stripped so the layout editor can re-resolve them.
+        /// Serialises a sprite list into <c>frame.Add(...)</c> code matching the layout tool's paste format.
         /// </summary>
+        private static string SerializeSprites(List<MySprite> sprites)
+        {
+            if (sprites == null || sprites.Count == 0) return "// No sprites captured.";
+            var sb = new StringBuilder();
+            sb.AppendLine("// ── LCD Snapshot ──");
+            sb.AppendLine($"// Captured: {DateTime.Now:yyyy-MM-dd HH:mm}  |  Sprites: {sprites.Count}");
+            sb.AppendLine();
+            for (int i = 0; i < sprites.Count; i++)
+            {
+                var s = sprites[i];
+                sb.AppendLine("frame.Add(new MySprite");
+                sb.AppendLine("{");
+                sb.AppendLine($"    Type           = SpriteType.{s.Type},");
+                sb.AppendLine($"    Data           = \"{s.Data}\",");
+                if (s.Position.HasValue)
+                    sb.AppendLine($"    Position       = new Vector2({s.Position.Value.X:F1}f, {s.Position.Value.Y:F1}f),");
+                if (s.Size.HasValue)
+                    sb.AppendLine($"    Size           = new Vector2({s.Size.Value.X:F1}f, {s.Size.Value.Y:F1}f),");
+                if (s.Color.HasValue)
+                    sb.AppendLine($"    Color          = new Color({s.Color.Value.R}, {s.Color.Value.G}, {s.Color.Value.B}, {s.Color.Value.A}),");
+                if (!string.IsNullOrEmpty(s.FontId))
+                    sb.AppendLine($"    FontId         = \"{s.FontId}\",");
+                sb.AppendLine($"    Alignment      = TextAlignment.{s.Alignment},");
+                sb.AppendLine($"    RotationOrScale = {s.RotationOrScale:F4}f,");
+                sb.AppendLine("});");
+                sb.AppendLine();
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Serialises captured sprites for the given entity (delegates to SerializeSprites).</summary>
         private string SerializeSnapshot(long entityId)
         {
             List<MySprite> sprites;
             if (!_capturedSprites.TryGetValue(entityId, out sprites) || sprites.Count == 0)
                 return "// No sprites captured.";
-
-            var sb = new StringBuilder();
-            sb.AppendLine($"// Snapshot: {sprites.Count} sprite(s)");
-            sb.AppendLine($"// Captured: {DateTime.UtcNow:u}");
-            sb.AppendLine();
-            sb.AppendLine("var sprites = new List<MySprite>");
-            sb.AppendLine("{");
-            for (int i = 0; i < sprites.Count; i++)
-            {
-                var s = sprites[i];
-                sb.AppendLine("    new MySprite");
-                sb.AppendLine("    {");
-                sb.AppendLine($"        Type = SpriteType.{s.Type},");
-                if (!string.IsNullOrEmpty(s.Data))
-                    sb.AppendLine($"        Data = \"{s.Data}\",");
-                if (s.Position.HasValue)
-                    sb.AppendLine($"        Position = new Vector2({s.Position.Value.X:F1}f, {s.Position.Value.Y:F1}f),");
-                if (s.Size.HasValue)
-                    sb.AppendLine($"        Size = new Vector2({s.Size.Value.X:F1}f, {s.Size.Value.Y:F1}f),");
-                if (s.Color.HasValue)
-                {
-                    var c = s.Color.Value;
-                    sb.AppendLine($"        Color = new Color({c.R}, {c.G}, {c.B}, {c.A}),");
-                }
-                if (!string.IsNullOrEmpty(s.FontId))
-                    sb.AppendLine($"        FontId = \"{s.FontId}\",");
-                if (s.Alignment != TextAlignment.LEFT)
-                    sb.AppendLine($"        Alignment = TextAlignment.{s.Alignment},");
-                if (Math.Abs(s.RotationOrScale - 1f) > 0.001f)
-                    sb.AppendLine($"        RotationOrScale = {s.RotationOrScale:F4}f,");
-                sb.AppendLine("    },");
-            }
-            sb.AppendLine("};");
-            return sb.ToString();
+            return SerializeSprites(sprites);
         }
 
         /// <summary>
@@ -525,10 +551,7 @@ namespace InventoryManagerLight
             // Write to file
             try
             {
-                var safeName = label.Replace(' ', '_').Replace('\\', '_').Replace('/', '_')
-                                    .Replace(':', '_').Replace('*', '_').Replace('?', '_')
-                                    .Replace('"', '_').Replace('<', '_').Replace('>', '_').Replace('|', '_');
-                var fileName = $"iml-snapshot-{safeName}-{DateTime.Now:yyyyMMdd-HHmmss}.cs";
+                var fileName = $"iml-snapshot-{MakeSafeName(label)}-{DateTime.Now:yyyyMMdd-HHmmss}.cs";
                 var filePath = Path.Combine(pluginDir, fileName);
                 File.WriteAllText(filePath, code);
                 _logger?.Info($"Snapshot written to {filePath}");
@@ -551,6 +574,121 @@ namespace InventoryManagerLight
         internal bool HasCapturedSnapshot(long entityId)
         {
             return _capturedSprites.ContainsKey(entityId);
+        }
+
+        // ── Shared helpers ────────────────────────────────────────────────────────
+
+        private static string MakeSafeName(string s)
+        {
+            return s.Replace(' ', '_').Replace('\\', '_').Replace('/', '_')
+                    .Replace(':', '_').Replace('*', '_').Replace('?', '_')
+                    .Replace('"', '_').Replace('<', '_').Replace('>', '_').Replace('|', '_');
+        }
+
+        // ── Named-pipe live stream ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Starts streaming the given entity's LCD frames to the layout tool over the
+        /// "SELcdSnapshot" named pipe.  Auto-disarms after <paramref name="seconds"/>.
+        /// The layout tool must be listening before this is called (2 s connect timeout).
+        /// </summary>
+        internal void StartLcdStream(long entityId, int seconds = 60)
+        {
+            StopLcdStream();
+            try
+            {
+                _lcdPipe         = new NamedPipeClientStream(".", "SELcdSnapshot", PipeDirection.Out);
+                _lcdPipe.Connect(2000);
+                _lcdPipeEntityId = entityId;
+                _lcdStreamExpiry = DateTime.UtcNow.AddSeconds(seconds);
+                _lcdStreamActive = true;
+                _logger?.Info($"LCD pipe stream started for entity {entityId} — auto-disarms in {seconds}s");
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error($"LCD pipe stream failed to connect: {ex.Message}");
+                StopLcdStream();
+            }
+        }
+
+        /// <summary>Stops the named-pipe LCD stream immediately.</summary>
+        internal void StopLcdStream()
+        {
+            _lcdStreamActive = false;
+            try { _lcdPipe?.Dispose(); } catch { }
+            _lcdPipe = null;
+        }
+
+        /// <summary>Sends one frame over the pipe; auto-disarms when the timer expires.</summary>
+        private void StreamFrame(long entityId, List<MySprite> sprites)
+        {
+            if (!_lcdStreamActive) return;
+            if (DateTime.UtcNow > _lcdStreamExpiry)
+            {
+                _logger?.Info("LCD pipe stream expired — auto-disarmed");
+                StopLcdStream();
+                return;
+            }
+            try
+            {
+                byte[] payload = Encoding.UTF8.GetBytes(SerializeSprites(sprites));
+                byte[] header  = BitConverter.GetBytes(payload.Length);
+                _lcdPipe.Write(header, 0, 4);
+                _lcdPipe.Write(payload, 0, payload.Length);
+                _lcdPipe.Flush();
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error($"LCD pipe stream write failed: {ex.Message}");
+                StopLcdStream();
+            }
+        }
+
+        // ── File-based live stream ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Starts writing every rendered frame for <paramref name="entityId"/> to a fixed file
+        /// the layout tool can watch via "Watch Snapshot File".  Auto-disarms after
+        /// <paramref name="seconds"/> seconds.  Returns the file path, or null if the
+        /// plugin directory is not set.
+        /// </summary>
+        internal string StartLiveFeed(long entityId, string label, int seconds = 60)
+        {
+            if (string.IsNullOrEmpty(_pluginDir))
+            {
+                _logger?.Info("StartLiveFeed: plugin dir not set");
+                return null;
+            }
+            var filePath = Path.Combine(_pluginDir, $"iml-live-{MakeSafeName(label ?? "live")}.cs");
+            _liveFeeds[entityId] = new LiveFeedState
+            {
+                FilePath     = filePath,
+                StartTime    = DateTime.UtcNow,
+                DurationSecs = seconds,
+            };
+            _logger?.Info($"LCD file stream started for entity {entityId} → {filePath} ({seconds}s)");
+            return filePath;
+        }
+
+        /// <summary>Stops the file-based live stream for the given entity immediately.</summary>
+        internal void StopLiveFeed(long entityId)
+        {
+            LiveFeedState removed;
+            if (_liveFeeds.TryRemove(entityId, out removed))
+                _logger?.Info($"LCD file stream ended for entity {entityId}");
+        }
+
+        private void WriteLiveFeed(long entityId, List<MySprite> sprites, LiveFeedState state)
+        {
+            try
+            {
+                File.WriteAllText(state.FilePath, SerializeSprites(sprites));
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error($"LCD file stream write failed for {entityId}: {ex.Message}");
+                StopLiveFeed(entityId);
+            }
         }
 #endif
     }
